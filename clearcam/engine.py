@@ -124,7 +124,10 @@ class LatestCamera:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             cap.set(cv2.CAP_PROP_FPS, self.settings.fps)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Let the driver capture while OpenCV decodes the previous MJPEG.
+            # A single driver buffer stalls capture; our queue still keeps only
+            # the newest decoded frame for processing.
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
             actual = (
                 int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                 int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
