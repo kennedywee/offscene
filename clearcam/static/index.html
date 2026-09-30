@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101311" />
+    <title>Clearcam · Camera studio</title>
+    <link rel="icon" type="image/svg+xml" href="/static/camera-off.svg" />
+    <link
+      rel="preload"
+      href="/static/fonts/ibm-plex-sans.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Clearcam home"
+        ><svg viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M5 11V5h6M21 5h6v6M27 21v6h-6M11 27H5v-6" />
+          <circle cx="16" cy="16" r="5" /></svg
+        >clearcam<span class="tag">LOCAL STUDIO</span></a
+      >
+      <span class="private"
+        ><span class="dot"></span>On your device. In your control.</span
+      >
+    </header>
+    <main>
+      <div class="heading">
+        <div>
+          <h1>You, without the background.</h1>
+          <p class="subtitle">A cleaner frame for every conversation.</p>
+        </div>
+        <div class="heading-actions">
+          <span class="compute" id="gpu">NVIDIA CUDA · GPU processing</span
+          ><button id="start" class="primary" disabled>
+            Start camera <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </div>
+      <div class="workspace">
+        <section class="monitor" aria-label="Camera preview">
+          <div class="monitor-bar">
+            <span
+              ><span class="dot" id="live-dot"></span
+              ><strong id="phase">Camera off</strong></span
+            ><span id="resolution-label">Preview</span>
+          </div>
+          <div class="viewport" id="viewport">
+            <img
+              id="preview-image"
+              src="/static/camera-off.svg"
+              alt="Live camera preview"
+              hidden
+            />
+            <div class="empty" id="empty">
+              <div class="empty-heading">
+                <svg viewBox="0 0 64 64" aria-hidden="true">
+                  <rect x="12" y="19" width="29" height="26" rx="6" />
+                  <path d="m41 27 12-7v24l-12-7" />
+                </svg>
+                <h2 id="empty-title">Your camera is off</h2>
+              </div>
+              <p id="empty-copy">
+                Choose your background, then start your camera.<br />Everything
+                is processed locally on your GPU.
+              </p>
+            </div>
+            <span class="preview-label" id="preview-label" hidden
+              >PROCESSED OUTPUT</span
+            >
+          </div>
+          <div class="preview-controls">
+            <div class="segmented" aria-label="Preview view">
+              <button data-view="output" aria-pressed="true">Output</button
+              ><button data-view="original" aria-pressed="false">
+                Original</button
+              ><button data-view="matte" aria-pressed="false">Matte</button>
+            </div>
+            <label class="mirror"
+              ><input type="checkbox" id="mirror" checked />Mirror
+              preview</label
+            >
+          </div>
+          <div class="telemetry">
+            <div>
+              <span class="metric" id="fps">—</span><span>output / fps</span>
+            </div>
+            <div>
+              <span class="metric" id="latency">—</span
+              ><span>processing / ms</span>
+            </div>
+            <div>
+              <span class="metric" id="preview-fps">—</span
+              ><span>preview / fps</span>
+            </div>
+            <div class="model-info">
+              <span class="model-mark">RVM</span
+              ><span id="model-name"
+                >ResNet50<br /><strong>CUDA · FP16</strong></span
+              >
+            </div>
+          </div>
+          <div class="notice" id="error" role="alert" hidden></div>
+          <div class="notice warning" id="warning" role="status" hidden></div>
+          <div class="below-preview">
+            <span class="key-hint" id="preview-status"
+              >Live preview streams up to 1080p at the processed frame rate.
+              Virtual output uses the full selected resolution.</span
+            >
+          </div>
+        </section>
+        <aside class="controls" aria-label="Camera settings">
+          <section class="control-section">
+            <div class="section-title">
+              <h2>Source</h2>
+              <button
+                class="text-button"
+                id="refresh"
+                aria-label="Refresh cameras"
+              >
+                Refresh
+              </button>
+            </div>
+            <label for="camera">Camera</label
+            ><select id="camera" data-capture>
+              <option value="/dev/video0">Detecting cameras…</option>
+            </select>
+            <div class="two-fields">
+              <div>
+                <label for="resolution">Resolution</label
+                ><select id="resolution" data-capture>
+                  <option value="1280x720">720p HD</option>
+                  <option value="1920x1080">1080p Full HD</option>
+                  <option value="2560x1440">1440p QHD · 30 fps</option>
+                  <option value="3840x2160">4K UHD · 30 fps</option>
+                </select>
+              </div>
+              <div>
+                <label for="fps-select">Frame rate</label
+                ><select id="fps-select" data-capture>
+                  <option value="30">30 fps</option>
+                  <option value="60">60 fps</option>
+                </select>
+              </div>
+            </div>
+            <p class="help">
+              Stop the camera to change resolution, frame rate, exposure, or
+              model. Higher resolutions require webcam support.
+            </p>
+            <label for="exposure">Exposure</label>
+            <select id="exposure" data-capture>
+              <option value="auto">Auto · adjusts for lighting</option>
+              <option value="motion">Motion priority · shorter shutter</option>
+              <option value="preserve">Keep camera settings</option>
+            </select>
+            <p class="help" id="capture-status">
+              Motion priority limits exposure for smoother video but may darken
+              the image. Previous camera settings are restored on stop.
+            </p>
+          </section>
+          <section class="control-section">
+            <div class="section-title">
+              <h2>Background</h2>
+              <span class="small-tag">LIVE EFFECT</span>
+            </div>
+            <div class="effects">
+              <button data-effect="blur" aria-pressed="true">
+                <span class="effect-art blur-art" aria-hidden="true"></span
+                >Blur</button
+              ><button data-effect="color" aria-pressed="false">
+                <span class="effect-art color-art" aria-hidden="true"></span
+                >Color</button
+              ><button data-effect="image" aria-pressed="false">
+                <span class="effect-art image-art" aria-hidden="true"></span
+                >Image
+              </button>
+            </div>
+            <div id="blur-control">
+              <label for="blur" class="range-label"
+                >Blur strength <output id="blur-value">55%</output></label
+              ><input id="blur" type="range" min="10" max="100" value="55" />
+            </div>
+            <div id="color-control" hidden>
+              <label for="color">Background color</label>
+              <div class="color-row">
+                <input type="color" id="color" value="#182226" /><span
+                  >Use green for chroma key in OBS.</span
+                >
+              </div>
+            </div>
+            <div id="image-control" hidden>
+              <label for="background-file" class="upload"
+                >Choose background image<input
+                  type="file"
+                  id="background-file"
+                  accept="image/png,image/jpeg,image/webp"
+              /></label>
+              <p class="help" id="upload-help">
+                JPEG, PNG or WebP · up to 12 MB
+              </p>
+            </div>
+          </section>
+          <section class="control-section">
+            <h2>Refinement</h2>
+            <label for="model">Matting model</label>
+            <select id="model" data-capture>
+              <option value="resnet50">ResNet50 · higher quality</option>
+              <option value="mobilenetv3">MobileNetV3 · faster</option>
+            </select>
+            <label for="quality">Analysis detail</label
+            ><select id="quality">
+              <option value="balanced">Balanced · everyday calls</option>
+              <option value="detail">
+                Detail · finer edges, more GPU
+              </option></select
+            ><label for="cleanup" class="range-label"
+              >Background suppression
+              <output id="cleanup-value">8%</output></label
+            ><input id="cleanup" type="range" min="0" max="80" value="8" />
+            <p class="help">
+              Increase to reject background leakage. High values can remove fine
+              hair and translucent edges.
+            </p>
+            <label for="shrink" class="range-label"
+              >Trim edge <output id="shrink-value">1 px</output></label
+            >
+            <input id="shrink" type="range" min="0" max="4" value="1" />
+          </section>
+          <section class="control-section output-section">
+            <div class="section-title">
+              <h2>Virtual camera</h2>
+              <label class="switch" aria-label="Enable virtual camera"
+                ><input
+                  id="virtual-camera"
+                  type="checkbox"
+                  role="switch" /><span></span
+              ></label>
+            </div>
+            <label for="output-device">Output device</label
+            ><input
+              id="output-device"
+              type="text"
+              value="/dev/video10"
+              pattern="/dev/video[0-9]+"
+              data-capture
+            />
+            <p id="output-status" class="help">
+              Enable to send the processed video to your meeting or streaming
+              app.
+            </p>
+            <details>
+              <summary>First-time Linux setup</summary>
+              <p>
+                Install <code>v4l2loopback-dkms</code> and matching kernel
+                headers. Then run:
+              </p>
+              <code class="command"
+                >sudo modprobe v4l2loopback video_nr=10 card_label=Clearcam
+                exclusive_caps=1</code
+              >
+              <p>
+                Select <strong>Clearcam</strong> as the camera in your call.
+                Setup details are in the project README.
+              </p>
+            </details>
+          </section>
+        </aside>
+      </div>
+      <footer>
+        <span
+          ><span class="dot"></span>Local processing · No account · No
+          cloud</span
+        ><span>Built with Robust Video Matting</span>
+      </footer>
+    </main>
+  </body>
+</html>

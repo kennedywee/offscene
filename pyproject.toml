@@ -1,0 +1,31 @@
+[project]
+name = "clearcam"
+version = "0.1.0"
+description = "Local NVIDIA GPU webcam matting and virtual camera for Linux"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "torch==2.8.0",
+  "opencv-python-headless>=4.12,<5",
+  "numpy>=2,<3",
+  "pillow>=11,<13",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "websockets>=15,<17",
+  "python-multipart>=0.0.20,<1",
+  "pyvirtualcam>=0.14,<0.15",
+]
+
+[project.scripts]
+clearcam = "clearcam.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }

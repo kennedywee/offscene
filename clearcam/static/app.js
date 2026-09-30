@@ -1,0 +1,383 @@
+const $ = (id) => document.getElementById(id);
+let state = null;
+let pending = false;
+let imageURL = null;
+let settingsQueue = Promise.resolve();
+let uiError = null;
+let backgroundPicker = false;
+let disconnected = false;
+let previewSocket = null;
+let previewFrames = 0;
+let previewPeriod = performance.now();
+
+async function api(path, options = {}) {
+  const response = await fetch(`/api/${path}`, {
+    signal: AbortSignal.timeout(15000),
+    ...options,
+    headers: {
+      "X-Clearcam": "1",
+      ...(options.body && !(options.body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : {}),
+      ...options.headers,
+    },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(
+      typeof body.detail === "string"
+        ? body.detail
+        : `Request failed (${response.status}).`,
+    );
+  }
+  return response;
+}
+
+function showError(error) {
+  uiError = error.message || String(error);
+  $("error").textContent = uiError;
+  $("error").hidden = false;
+}
+
+function render(next, sync = false) {
+  state = next;
+  const running = next.phase === "running";
+  const active = ["loading", "running", "stopping"].includes(next.phase);
+  $("phase").textContent = {
+    stopped: "Camera off",
+    loading: "Loading GPU model…",
+    running: "Camera live",
+    stopping: "Stopping camera…",
+    error: "Camera error",
+  }[next.phase];
+  $("live-dot").classList.toggle("live", running);
+  $("start").textContent = active
+    ? next.phase === "stopping"
+      ? "Stopping…"
+      : "Stop camera"
+    : "Start camera ↗";
+  $("start").classList.toggle("running", active);
+  $("start").disabled = pending || next.phase === "stopping";
+  document
+    .querySelectorAll("[data-capture]")
+    .forEach((el) => (el.disabled = active));
+  $("refresh").disabled = active;
+  $("fps").textContent = running ? next.fps.toFixed(1) : "—";
+  $("latency").textContent = running ? next.processing_ms.toFixed(1) : "—";
+  if (!running) $("preview-fps").textContent = "—";
+  $("model-name").textContent =
+    `${next.settings.model === "resnet50" ? "ResNet50" : "MobileNetV3"} · CUDA FP16`;
+  $("capture-status").textContent =
+    next.capture_warning ||
+    (running
+      ? `Webcam capture: ${next.capture_fps.toFixed(1)} fps.${next.capture_fps > 0 && next.capture_fps < next.settings.fps * 0.8 ? " Capture is below the requested rate; check lighting and exposure." : ""}`
+      : "Motion priority limits exposure for smoother video but may darken the image. Previous camera settings are restored on stop.");
+  $("resolution-label").textContent = running
+    ? `${next.resolution} · ${next.settings.fps} fps requested`
+    : "Preview";
+  if (next.gpu) $("gpu").textContent = next.gpu;
+  $("error").textContent = next.error || uiError || "";
+  $("error").hidden = !next.error && !uiError;
+  $("warning").textContent = next.warning || "";
+  $("warning").hidden = !next.warning;
+  $("output-status").textContent = next.virtual_device
+    ? `Sending to ${next.virtual_device}. Select Clearcam in your meeting app.`
+    : next.settings.virtual_camera
+      ? "Output requested. The virtual device opens after processing starts."
+      : "Enable to send the processed video to your meeting or streaming app.";
+  $("empty-title").textContent =
+    next.phase === "loading"
+      ? "Preparing your GPU"
+      : next.phase === "error"
+        ? "Let’s reconnect your camera"
+        : "Your camera is off";
+  $("empty-copy").textContent =
+    next.phase === "loading"
+      ? "The first start downloads the model and warms up CUDA. This can take a moment."
+      : "Choose your background, then start your camera. Everything is processed locally on your GPU.";
+  if (!running) hideFrame();
+  else connectPreview();
+  if (sync) {
+    const s = next.settings;
+    for (const [id, key] of Object.entries({
+      camera: "camera",
+      resolution: "resolution",
+      "fps-select": "fps",
+      quality: "quality",
+      model: "model",
+      exposure: "exposure",
+      color: "color",
+      blur: "blur",
+      "output-device": "output_device",
+    }))
+      $(id).value = s[key];
+    $("cleanup").value = Math.round(s.cleanup * 100);
+    $("shrink").value = s.shrink;
+    $("virtual-camera").checked = s.virtual_camera;
+    $("blur-value").textContent = `${s.blur}%`;
+    $("cleanup-value").textContent = `${Math.round(s.cleanup * 100)}%`;
+    $("shrink-value").textContent = `${s.shrink} px`;
+  }
+  document
+    .querySelectorAll("[data-view]")
+    .forEach((el) =>
+      el.setAttribute(
+        "aria-pressed",
+        el.dataset.view === next.settings.preview,
+      ),
+    );
+  document
+    .querySelectorAll("[data-effect]")
+    .forEach((el) =>
+      el.setAttribute(
+        "aria-pressed",
+        el.dataset.effect ===
+          (backgroundPicker ? "image" : next.settings.effect),
+      ),
+    );
+  for (const effect of ["blur", "color", "image"])
+    $(`${effect}-control`).hidden =
+      effect !== (backgroundPicker ? "image" : next.settings.effect);
+  $("preview-label").textContent = {
+    output: "PROCESSED OUTPUT",
+    original: "ORIGINAL · PREVIEW ONLY",
+    matte: "ALPHA MATTE · PREVIEW ONLY",
+  }[next.settings.preview];
+}
+
+function patch(values) {
+  settingsQueue = settingsQueue.then(async () => {
+    try {
+      const next = await (
+        await api("settings", { method: "PATCH", body: JSON.stringify(values) })
+      ).json();
+      uiError = null;
+      render(next);
+    } catch (error) {
+      showError(error);
+      if (state) render(state, true);
+    }
+  });
+  return settingsQueue;
+}
+
+async function refreshDevices() {
+  const list = await (await api("devices")).json();
+  const physical = list.filter((device) => !device.virtual);
+  $("camera").replaceChildren(
+    ...physical.map(
+      (device) => new Option(`${device.name} · ${device.path}`, device.path),
+    ),
+  );
+  if (!physical.length) $("camera").add(new Option("No webcam detected", ""));
+  if (state && physical.some((device) => device.path === state.settings.camera))
+    $("camera").value = state.settings.camera;
+  else if (physical.length) await patch({ camera: physical[0].path });
+}
+
+$("start").addEventListener("click", async () => {
+  pending = true;
+  uiError = null;
+  render(state);
+  try {
+    await settingsQueue;
+    const action = ["loading", "running"].includes(state.phase)
+      ? "stop"
+      : "start";
+    render(await (await api(action, { method: "POST" })).json());
+  } catch (error) {
+    showError(error);
+  } finally {
+    pending = false;
+    render(state);
+  }
+});
+$("refresh").addEventListener("click", () => refreshDevices().catch(showError));
+for (const [id, key] of Object.entries({
+  camera: "camera",
+  resolution: "resolution",
+  "fps-select": "fps",
+  quality: "quality",
+  model: "model",
+  exposure: "exposure",
+  color: "color",
+  "output-device": "output_device",
+})) {
+  $(id).addEventListener("change", (event) =>
+    patch({
+      [key]: key === "fps" ? Number(event.target.value) : event.target.value,
+    }),
+  );
+}
+for (const id of ["blur", "cleanup", "shrink"]) {
+  $(id).addEventListener(
+    "input",
+    () =>
+      ($(`${id}-value`).textContent =
+        `${$(id).value}${id === "shrink" ? " px" : "%"}`),
+  );
+  $(id).addEventListener("change", () =>
+    patch({ [id]: Number($(id).value) / (id === "cleanup" ? 100 : 1) }),
+  );
+}
+document
+  .querySelectorAll("[data-view]")
+  .forEach((button) =>
+    button.addEventListener("click", () =>
+      patch({ preview: button.dataset.view }),
+    ),
+  );
+document.querySelectorAll("[data-effect]").forEach((button) =>
+  button.addEventListener("click", () => {
+    backgroundPicker =
+      button.dataset.effect === "image" && !state.has_background;
+    if (backgroundPicker) {
+      render(state);
+      $("background-file").focus();
+    } else patch({ effect: button.dataset.effect });
+  }),
+);
+$("virtual-camera").addEventListener("change", (event) =>
+  patch({ virtual_camera: event.target.checked }),
+);
+$("mirror").addEventListener("change", () =>
+  $("preview-image").classList.toggle("mirrored", $("mirror").checked),
+);
+$("preview-image").classList.add("mirrored");
+$("background-file").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  $("upload-help").textContent = "Loading background…";
+  try {
+    const data = new FormData();
+    data.append("file", file);
+    const next = await (
+      await api("background", { method: "POST", body: data })
+    ).json();
+    backgroundPicker = false;
+    uiError = null;
+    render(next);
+    $("upload-help").textContent = file.name;
+  } catch (error) {
+    showError(error);
+    $("upload-help").textContent = "Upload failed. Choose another image.";
+  }
+  event.target.value = "";
+});
+
+function hideFrame() {
+  if (previewSocket) {
+    const socket = previewSocket;
+    previewSocket = null;
+    socket.close();
+  }
+  $("preview-image").hidden = true;
+  $("preview-label").hidden = true;
+  $("empty").hidden = false;
+  $("preview-image").src = "/static/camera-off.svg";
+  if (imageURL) {
+    URL.revokeObjectURL(imageURL);
+    imageURL = null;
+  }
+}
+
+function connectPreview() {
+  if (previewSocket || document.hidden || state?.phase !== "running") return;
+  const socket = new WebSocket(
+    `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/preview`,
+  );
+  previewSocket = socket;
+  previewFrames = 0;
+  previewPeriod = performance.now();
+  socket.onmessage = async (event) => {
+    const url = URL.createObjectURL(event.data);
+    try {
+      const decoded = new Image();
+      decoded.src = url;
+      await decoded.decode();
+      if (previewSocket !== socket || state?.phase !== "running") {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      const previous = imageURL;
+      imageURL = url;
+      $("preview-image").src = url;
+      $("preview-image").hidden = false;
+      $("preview-label").hidden = false;
+      $("empty").hidden = true;
+      if (previous) URL.revokeObjectURL(previous);
+      previewFrames++;
+      const now = performance.now();
+      if (now - previewPeriod >= 1000) {
+        $("preview-fps").textContent = (
+          (previewFrames * 1000) /
+          (now - previewPeriod)
+        ).toFixed(1);
+        previewFrames = 0;
+        previewPeriod = now;
+      }
+      $("preview-status").textContent =
+        `Live preview: ${decoded.naturalWidth} × ${decoded.naturalHeight}. Virtual output: ${state.resolution}.`;
+      // Acknowledge after the next paint opportunity, preventing a frame backlog.
+      requestAnimationFrame(() => {
+        if (socket.readyState === WebSocket.OPEN) socket.send("next");
+      });
+    } catch {
+      URL.revokeObjectURL(url);
+      socket.close();
+    }
+  };
+  socket.onclose = () => {
+    if (previewSocket === socket) {
+      previewSocket = null;
+      hideFrame();
+      $("preview-fps").textContent = "—";
+      $("preview-status").textContent = "Preview disconnected. Reconnecting…";
+    }
+  };
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hideFrame();
+  else connectPreview();
+});
+
+async function statusLoop() {
+  try {
+    const next = await (await api("status")).json();
+    if (disconnected) uiError = null;
+    disconnected = false;
+    const first = !state;
+    render(next, first);
+    if (first) await refreshDevices();
+  } catch (error) {
+    disconnected = true;
+    showError(
+      new Error(
+        "Disconnected from Clearcam. Check that the local server is running.",
+      ),
+    );
+    hideFrame();
+    $("phase").textContent = "Disconnected";
+    $("start").disabled = true;
+    $("live-dot").classList.remove("live");
+    $("fps").textContent =
+      $("latency").textContent =
+      $("preview-fps").textContent =
+        "—";
+  }
+  setTimeout(statusLoop, 1000);
+}
+
+async function init() {
+  try {
+    state = await (await api("status")).json();
+    await refreshDevices();
+    render(state, true);
+  } catch (error) {
+    showError(error);
+  }
+  statusLoop();
+  connectPreview();
+}
+init();
