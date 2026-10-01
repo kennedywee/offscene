@@ -15,7 +15,7 @@ async function api(path, options = {}) {
     signal: AbortSignal.timeout(15000),
     ...options,
     headers: {
-      "X-Clearcam": "1",
+      "X-Offscene": "1",
       ...(options.body && !(options.body instanceof FormData)
         ? { "Content-Type": "application/json" }
         : {}),
@@ -39,6 +39,19 @@ function showError(error) {
   $("error").hidden = false;
 }
 
+function updateFrameRates(resolution, fps) {
+  const rates = ["2560x1440", "3840x2160"].includes(resolution)
+    ? [30]
+    : [30, 60];
+  const dropdown = dropdowns.get("fps-select");
+  if (dropdown.options.length !== rates.length) {
+    dropdown.setOptions(
+      rates.map((rate) => ({ value: String(rate), label: `${rate} fps` })),
+    );
+  }
+  dropdown.setValue(rates.includes(Number(fps)) ? fps : 30);
+}
+
 function render(next, sync = false) {
   state = next;
   const running = next.phase === "running";
@@ -55,23 +68,24 @@ function render(next, sync = false) {
     ? next.phase === "stopping"
       ? "Stopping…"
       : "Stop camera"
-    : "Start camera ↗";
+    : "Start camera";
   $("start").classList.toggle("running", active);
   $("start").disabled = pending || next.phase === "stopping";
   document
     .querySelectorAll("[data-capture]")
     .forEach((el) => (el.disabled = active));
   $("refresh").disabled = active;
+  if (active) dropdowns.forEach((dropdown) => dropdown.close());
   $("fps").textContent = running ? next.fps.toFixed(1) : "—";
+  $("capture-fps").textContent = running ? next.capture_fps.toFixed(1) : "—";
   $("latency").textContent = running ? next.processing_ms.toFixed(1) : "—";
   if (!running) $("preview-fps").textContent = "—";
-  $("model-name").textContent =
-    `${next.settings.model === "resnet50" ? "ResNet50" : "MobileNetV3"} · CUDA FP16`;
   $("capture-status").textContent =
     next.capture_warning ||
     (running
       ? `Webcam capture: ${next.capture_fps.toFixed(1)} fps.${next.capture_fps > 0 && next.capture_fps < next.settings.fps * 0.8 ? " Capture is below the requested rate; check lighting and exposure." : ""}`
       : "Motion priority limits exposure for smoother video but may darken the image. Previous camera settings are restored on stop.");
+  $("resolution-label").hidden = !running;
   $("resolution-label").textContent = running
     ? `${next.resolution} · ${next.settings.fps} fps requested`
     : "Preview";
@@ -81,7 +95,7 @@ function render(next, sync = false) {
   $("warning").textContent = next.warning || "";
   $("warning").hidden = !next.warning;
   $("output-status").textContent = next.virtual_device
-    ? `Sending to ${next.virtual_device}. Select Clearcam in your meeting app.`
+    ? `Sending to ${next.virtual_device}. Select Offscene in your meeting app.`
     : next.settings.virtual_camera
       ? "Output requested. The virtual device opens after processing starts."
       : "Enable to send the processed video to your meeting or streaming app.";
@@ -95,22 +109,25 @@ function render(next, sync = false) {
     next.phase === "loading"
       ? "The first start downloads the model and warms up CUDA. This can take a moment."
       : "Choose your background, then start your camera. Everything is processed locally on your GPU.";
-  if (!running) hideFrame();
-  else connectPreview();
+  if (!running) {
+    hideFrame();
+    $("preview-status").textContent =
+      "Live preview streams up to 1080p. Virtual output uses the full selected resolution.";
+  } else connectPreview();
   if (sync) {
     const s = next.settings;
+    updateFrameRates(s.resolution, s.fps);
     for (const [id, key] of Object.entries({
       camera: "camera",
       resolution: "resolution",
-      "fps-select": "fps",
-      quality: "quality",
       model: "model",
       exposure: "exposure",
       color: "color",
       blur: "blur",
       "output-device": "output_device",
     }))
-      $(id).value = s[key];
+      if (dropdowns.has(id)) dropdowns.get(id).setValue(s[key]);
+      else $(id).value = s[key];
     $("cleanup").value = Math.round(s.cleanup * 100);
     $("shrink").value = s.shrink;
     $("virtual-camera").checked = s.virtual_camera;
@@ -118,6 +135,9 @@ function render(next, sync = false) {
     $("cleanup-value").textContent = `${Math.round(s.cleanup * 100)}%`;
     $("shrink-value").textContent = `${s.shrink} px`;
   }
+  document.querySelectorAll('input[name="quality"]').forEach((input) => {
+    input.checked = input.value === next.settings.quality;
+  });
   document
     .querySelectorAll("[data-view]")
     .forEach((el) =>
@@ -161,17 +181,45 @@ function patch(values) {
   return settingsQueue;
 }
 
+function selectPanel(name) {
+  document.querySelectorAll("[data-panel]").forEach((tab) => {
+    const selected = tab.dataset.panel === name;
+    tab.setAttribute("aria-selected", selected);
+    tab.tabIndex = selected ? 0 : -1;
+    $(`${tab.dataset.panel}-panel`).hidden = !selected;
+  });
+}
+
+const panelTabs = [...document.querySelectorAll("[data-panel]")];
+panelTabs.forEach((tab, index) => {
+  tab.addEventListener("click", () => selectPanel(tab.dataset.panel));
+  tab.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next =
+      event.key === "Home"
+        ? panelTabs[0]
+        : event.key === "End"
+          ? panelTabs.at(-1)
+          : panelTabs[(index + 1) % panelTabs.length];
+    selectPanel(next.dataset.panel);
+    next.focus();
+  });
+});
+
 async function refreshDevices() {
   const list = await (await api("devices")).json();
   const physical = list.filter((device) => !device.virtual);
-  $("camera").replaceChildren(
-    ...physical.map(
-      (device) => new Option(`${device.name} · ${device.path}`, device.path),
-    ),
+  dropdowns.get("camera").setOptions(
+    physical.length
+      ? physical.map((device) => ({
+          label: `${device.name} · ${device.path}`,
+          value: device.path,
+        }))
+      : [{ label: "No webcam detected", value: "" }],
   );
-  if (!physical.length) $("camera").add(new Option("No webcam detected", ""));
   if (state && physical.some((device) => device.path === state.settings.camera))
-    $("camera").value = state.settings.camera;
+    dropdowns.get("camera").setValue(state.settings.camera);
   else if (physical.length) await patch({ camera: physical[0].path });
 }
 
@@ -193,11 +241,15 @@ $("start").addEventListener("click", async () => {
   }
 });
 $("refresh").addEventListener("click", () => refreshDevices().catch(showError));
+$("resolution").addEventListener("change", (event) => {
+  const resolution = event.target.value;
+  updateFrameRates(resolution, $("fps-select").value);
+  // Submit the pair together so switching from 60 fps to 4K is always valid.
+  patch({ resolution, fps: Number($("fps-select").value) });
+});
 for (const [id, key] of Object.entries({
   camera: "camera",
-  resolution: "resolution",
   "fps-select": "fps",
-  quality: "quality",
   model: "model",
   exposure: "exposure",
   color: "color",
@@ -209,6 +261,11 @@ for (const [id, key] of Object.entries({
     }),
   );
 }
+document.querySelectorAll('input[name="quality"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    if (input.checked) patch({ quality: input.value });
+  });
+});
 for (const id of ["blur", "cleanup", "shrink"]) {
   $(id).addEventListener(
     "input",
@@ -229,6 +286,7 @@ document
   );
 document.querySelectorAll("[data-effect]").forEach((button) =>
   button.addEventListener("click", () => {
+    selectPanel("background");
     backgroundPicker =
       button.dataset.effect === "image" && !state.has_background;
     if (backgroundPicker) {
@@ -354,7 +412,7 @@ async function statusLoop() {
     disconnected = true;
     showError(
       new Error(
-        "Disconnected from Clearcam. Check that the local server is running.",
+        "Disconnected from Offscene. Check that the local server is running.",
       ),
     );
     hideFrame();
@@ -362,12 +420,34 @@ async function statusLoop() {
     $("start").disabled = true;
     $("live-dot").classList.remove("live");
     $("fps").textContent =
+      $("capture-fps").textContent =
       $("latency").textContent =
       $("preview-fps").textContent =
         "—";
   }
   setTimeout(statusLoop, 1000);
 }
+
+const setupPopover = $("setup-popover");
+setupPopover.addEventListener("beforetoggle", (event) => {
+  if (event.newState !== "open") return;
+  const trigger = $("setup-help").getBoundingClientRect();
+  const width = Math.min(380, innerWidth - 32);
+  setupPopover.style.left = `${Math.max(16, Math.min(trigger.right - width, innerWidth - width - 16))}px`;
+  setupPopover.style.bottom = `${Math.max(16, innerHeight - trigger.top + 8)}px`;
+  setupPopover.style.maxHeight = `${Math.max(120, trigger.top - 24)}px`;
+});
+function closeSetupPopover() {
+  if (setupPopover.matches(":popover-open")) setupPopover.hidePopover();
+}
+window.addEventListener("resize", closeSetupPopover);
+document.addEventListener(
+  "scroll",
+  (event) => {
+    if (event.target !== setupPopover) closeSetupPopover();
+  },
+  true,
+);
 
 async function init() {
   try {

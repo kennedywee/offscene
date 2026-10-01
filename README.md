@@ -1,8 +1,10 @@
-# Clearcam
+# Offscene
 
 GPU webcam background removal for Linux and NVIDIA GPUs. A local control panel provides background blur, solid-color replacement, image replacement, edge cleanup, and a V4L2 virtual camera for meeting apps and OBS.
 
-Clearcam uses [Robust Video Matting](https://github.com/PeterL1n/RobustVideoMatting) with FP16 CUDA inference. Choose ResNet50 for higher quality or MobileNetV3 for lower GPU cost. It retains the model's recurrent state between frames. Matting, edge trimming, background blur, and compositing run on the GPU; webcam capture, JPEG decoding/preview encoding, and virtual-device delivery use the CPU. It is an independent project, not NVIDIA Broadcast, and equivalent quality has not been established. Hair, fast movement, objects, and difficult lighting can still produce artifacts.
+The studio follows the approved [Offscene satin metal direction in Paper](https://app.paper.design/file/01M3TDHM1FNCEV9YEPAZK2J3WA/p-1-0): graphite surfaces, a silver switch wordmark, Public Sans, and restrained metal finishes on interactive controls. Background effects sit below the preview; the Adjustments panel separates background and camera settings. Capture, output, and preview rates remain separate measured values.
+
+Offscene uses [Robust Video Matting](https://github.com/PeterL1n/RobustVideoMatting) with FP16 CUDA inference. Choose ResNet50 for higher quality or MobileNetV3 for lower GPU cost. It retains the model's recurrent state between frames. Matting, edge trimming, background blur, and compositing run on the GPU; webcam capture, JPEG decoding/preview encoding, and virtual-device delivery use the CPU. It is an independent project, not NVIDIA Broadcast, and equivalent quality has not been established. Hair, fast movement, objects, and difficult lighting can still produce artifacts.
 
 ## Run
 
@@ -10,36 +12,63 @@ Requirements: Linux, an NVIDIA GPU with a driver compatible with CUDA 12.8, a V4
 
 ```sh
 uv sync
-uv run clearcam
+uv run offscene
 ```
 
 Open **http://127.0.0.1:8765**, select your webcam and effect, then click **Start camera**. Python 3.12 and the CUDA runtime dependencies are installed into the project's `.venv`; a system CUDA toolkit is unnecessary. The first dependency installation downloads several GB. The first start of each model downloads it from the official RVM release and verifies its SHA-256 hash (54 MB for ResNet50, 8 MB for MobileNetV3). Later runs work offline.
 
-The camera starts only on request. **Stop camera** releases it and frees GPU model memory. Closing the control panel does **not** stop output, so calls continue while the panel is closed. Stop the camera in the panel or press Ctrl+C in the server terminal. Do not run multiple server instances against the same webcam. To change the HTTP port: `uv run clearcam --port 8766`.
+The camera starts only on request. **Stop camera** releases it and frees GPU model memory. Closing the control panel does **not** stop output, so calls continue while the panel is closed. Stop the camera in the panel or press Ctrl+C in the server terminal. Do not run multiple server instances against the same webcam. To change the HTTP port: `uv run offscene --port 8766`.
 
 ## Virtual camera setup
 
-[pyvirtualcam](https://github.com/letmaik/pyvirtualcam) uses [v4l2loopback](https://github.com/v4l2loopback/v4l2loopback) on Linux. Install its DKMS package and the headers matching your **running** kernel. Clearcam does not install kernel modules or ask for administrator credentials through the browser.
+[pyvirtualcam](https://github.com/letmaik/pyvirtualcam) uses [v4l2loopback](https://github.com/v4l2loopback/v4l2loopback) on Linux. Install its DKMS package and the headers matching your **running** kernel. Offscene does not install kernel modules or ask for administrator credentials through the browser.
 
 On Arch / Omarchy (the current machine already has matching kernel headers):
 
 ```sh
 sudo pacman -S --needed v4l2loopback-dkms
-sudo modprobe v4l2loopback video_nr=10 card_label=Clearcam exclusive_caps=1
+sudo modprobe v4l2loopback video_nr=10 card_label=Offscene exclusive_caps=1
 ```
 
 On Ubuntu / Debian:
 
 ```sh
 sudo apt install v4l2loopback-dkms linux-headers-$(uname -r)
-sudo modprobe v4l2loopback video_nr=10 card_label=Clearcam exclusive_caps=1
+sudo modprobe v4l2loopback video_nr=10 card_label=Offscene exclusive_caps=1
 ```
 
-Check that `/dev/video10` is free before choosing that number. If an existing loopback module serves another app, create an additional device with `v4l2loopback-ctl add -n Clearcam /dev/video10` instead of unloading the module. Secure Boot systems may require signing/enrolling the DKMS module according to the distribution's instructions. If DKMS builds for a different installed kernel, boot that kernel or install headers for the running one.
+Check that `/dev/video10` is free before choosing that number. If an existing loopback module serves another app, install your distribution's `v4l2loopback-ctl` utility and create an additional device with `sudo v4l2loopback-ctl add -n Offscene -x 1 /dev/video10` instead of unloading the module. Secure Boot systems may require signing/enrolling the DKMS module according to the distribution's instructions. If DKMS builds for a different installed kernel, boot that kernel or install headers for the running one.
 
-Enable **Virtual camera** in Clearcam, then select **Clearcam** in Meet, Zoom, Discord, OBS, or another camera consumer. Start output before opening the consumer's camera list: `exclusive_caps=1` advertises capture capability once a producer attaches. Refresh the list or reopen the consumer if needed. A failed virtual-camera connection leaves the processed preview working and displays an error; toggle output off and on after fixing setup to retry. Run the `modprobe` command again after a reboot; the app does not change boot configuration.
+Enable **Virtual camera** in Offscene, then select **Offscene** in Meet, Zoom, Discord, OBS, or another camera consumer. Start output before opening the consumer's camera list: `exclusive_caps=1` advertises capture capability once a producer attaches. Refresh the list or reopen the consumer if needed. A failed virtual-camera connection leaves the processed preview working and displays an error; toggle output off and on after fixing setup to retry. Run the `modprobe` command again after a reboot; the app does not change boot configuration.
 
-Virtual webcams transmit opaque video, not an alpha channel. Use **Color** with `#00ff00` and OBS's Chroma Key filter for a transparent scene. **Original** and **Matte** only change the diagnostic preview; the virtual camera always receives the processed composite. **Mirror preview** is also preview-only.
+Virtual webcams transmit opaque video, not an alpha channel. Use **Solid color** with `#00ff00` and OBS's Chroma Key filter for a transparent scene. **Original** and **Matte** only change the diagnostic preview; the virtual camera always receives the processed composite. **Mirror preview** is also preview-only.
+
+## Upgrade from Clearcam or a renamed directory
+
+Stop the old server, open a terminal in the `offscene` directory, then run `uv sync` and `uv run offscene`. Sync removes the old project installation and installs the new command at the current path. If an activated shell still points to the old directory, run `deactivate` first. The Python package is now `offscene`, the API header is `X-Offscene: 1`, and the cache override is `OFFSCENE_CACHE`. Update scripts or environment settings that used the previous names. The default `.cache/` directory is unchanged, so settings and downloaded models survive the rename. Reload any open control-panel tabs.
+
+If you moved the directory with an existing `.venv`, regenerate it to repair all dependency commands and activation scripts, which can retain absolute paths. This replaces only the disposable environment; `.cache/` is preserved:
+
+```sh
+uv venv --clear --python 3.12 --prompt offscene
+uv sync --locked
+uv run offscene
+```
+
+Loading an already-loaded kernel module does not change its camera label. If the old Clearcam device is the **only loopback device**, stop the camera and close all camera consumers, then recreate it:
+
+```sh
+sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback video_nr=10 card_label=Offscene exclusive_caps=1
+cat /sys/devices/virtual/video4linux/video10/name
+```
+
+The final command should print `Offscene`. This reuses `/dev/video10`; no second device or kernel-module reinstall is needed. If the module is busy, close its consumers and retry; do not force removal. When other loopback devices exist, use the distribution's `v4l2loopback-ctl` utility to delete and recreate only the old device instead:
+
+```sh
+sudo v4l2loopback-ctl delete /dev/video10 && sudo v4l2loopback-ctl add -n Offscene -x 1 /dev/video10
+```
+
+If you previously added persistent configuration under `/etc/modprobe.d/` or `/etc/modules-load.d/`, update only the old app's entry and remove duplicate device definitions. This project does not create those files. The checked machine had no persistent loopback configuration. See the upstream [device-management instructions](https://github.com/v4l2loopback/v4l2loopback#dynamic-device-management) for shared-module setups.
 
 ## Quality and performance
 
@@ -55,6 +84,8 @@ Virtual webcams transmit opaque video, not an alpha channel. Use **Color** with 
 On the RTX 3060 Ti, a repeated 1080p frame measured about 11 ms with ResNet50 / Balanced and 17.5 ms with ResNet50 / Detail before adding edge trimming. These are processing benchmarks, not webcam frame rates. The original EMEET Piko manual setting of 97.4 ms limited capture to approximately 10.3 fps; changing application language cannot overcome that sensor limit. The larger model offers a modest quality improvement, not guaranteed Broadcast parity.
 
 ## Verified on this machine
+
+The Offscene rebrand was checked on 2026-10-01: the old project installation and build artifacts were replaced, the virtual environment was regenerated for the renamed directory, and `/dev/video10` reported `Offscene`. Live 1080p preview, a separate ten-frame virtual-camera read, blur/color/image controls, image upload, Original/Matte preview, keyboard adjustment tabs, and stop/restart passed. Desktop (1920 × 1080), mobile (375 × 812), and landscape (812 × 375) had no horizontal overflow. The renamed API header was accepted; missing and old headers were rejected. Settings were restored and the camera stopped after verification. Python compilation, Ruff, JavaScript syntax checks, and wheel/source builds passed.
 
 Live 720p and 1080p capture, blur/color/image replacement, background upload through the browser, matte preview, and stop/restart were exercised. After installing v4l2loopback, a separate OpenCV consumer read ten processed 720p frames from `/dev/video10`; switching the panel to Original preserved the processed virtual output. Missing-device errors kept the preview running. Desktop (1920 × 1080) and mobile (375 × 812) UI checks passed without horizontal overflow. Ruff, JavaScript syntax checks, Python compilation, and wheel/source builds passed. Specific meeting applications and NVIDIA Broadcast quality parity have not been tested.
 
@@ -75,12 +106,12 @@ A subsequent 1080p/60 investigation isolated two capture bottlenecks: the retain
 
 The server binds only to `127.0.0.1`; no video is uploaded to a cloud service. The UI has no external fonts, scripts, or analytics. HTTP API reads and camera controls require a custom request header, and preview WebSockets require an exact matching Origin. No cross-origin permissions are granted. This protects against drive-by websites, not other processes running as your user. Do not expose the server through a public proxy.
 
-Settings and model files live in `.cache/` (override with `CLEARCAM_CACHE`). Uploaded backgrounds live in memory, so upload them again after a server restart. Settings persist; camera activation does not. Background uploads are limited to 12 MB and 24 megapixels.
+Settings and model files live in `.cache/` (override with `OFFSCENE_CACHE`). Uploaded backgrounds live in memory, so upload them again after a server restart. Settings persist; camera activation does not. Background uploads are limited to 12 MB and 24 megapixels.
 
 ## Troubleshooting
 
-- **CUDA unavailable:** check `nvidia-smi` and run `uv sync`. Clearcam reports an error rather than silently falling back to CPU inference.
-- **Cannot open webcam:** close apps holding the physical camera; check device permissions and click Refresh. Use the virtual camera in call apps while Clearcam owns the physical one.
+- **CUDA unavailable:** check `nvidia-smi` and run `uv sync`. Offscene reports an error rather than silently falling back to CPU inference.
+- **Cannot open webcam:** close apps holding the physical camera; check device permissions and click Refresh. Use the virtual camera in call apps while Offscene owns the physical one.
 - **No frames / USB disconnect:** stop, reconnect, refresh, and start again. A stalled capture thread prevents a second capture from opening over it.
 - **Low fps:** compare capture, output, and preview rates. For low capture fps, try Motion priority and more light. If processing is the limit, try Balanced or MobileNetV3. If only preview is slow, keep the browser visible and check its GPU acceleration. Refresh old control-panel tabs after upgrading.
 - **Model download failure:** confirm GitHub access and retry Start. Incomplete downloads are discarded; a checksum mismatch prevents loading.
@@ -91,4 +122,4 @@ GPL-3.0; see [LICENSE](LICENSE). The separately downloaded pretrained model is f
 
 RVM: Shanchuan Lin, Linjie Yang, Imran Saleemi, and Soumyadip Sengupta, *Robust High-Resolution Video Matting with Temporal Guidance*, WACV 2022. [Paper and project](https://peterl1n.github.io/RobustVideoMatting/).
 
-The interface bundles IBM Plex Sans, copyright IBM Corp., under the SIL Open Font License. The font and its license are served locally from `clearcam/static/fonts/`.
+The interface bundles [Public Sans](https://github.com/uswds/public-sans), under the SIL Open Font License. The font and its license are served locally from `offscene/static/fonts/`.

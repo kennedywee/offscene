@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 log = logging.getLogger(__name__)
 CACHE = Path(
-    os.environ.get("CLEARCAM_CACHE", Path(__file__).resolve().parent.parent / ".cache")
+    os.environ.get("OFFSCENE_CACHE", Path(__file__).resolve().parent.parent / ".cache")
 )
 MODELS = {
     "mobilenetv3": "847a8b5139498afbf7abde9cc347b41030540f6498db593a0e3d9dde1eccdd96",

@@ -37,7 +37,7 @@ async def lifespan(app):
     engine.stop()
 
 
-app = FastAPI(title="Clearcam", lifespan=lifespan)
+app = FastAPI(title="Offscene", lifespan=lifespan)
 app.add_middleware(
     TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]"]
 )
@@ -49,10 +49,10 @@ async def local_control(request: Request, call_next):
     # cross-origin fetch. No CORS permission is granted. Also protect frame reads.
     if (
         request.url.path.startswith("/api/")
-        and request.headers.get("x-clearcam") != "1"
+        and request.headers.get("x-offscene") != "1"
     ):
         return JSONResponse(
-            {"detail": "Use the local Clearcam control panel."}, status_code=403
+            {"detail": "Use the local Offscene control panel."}, status_code=403
         )
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
@@ -164,7 +164,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Clearcam — NVIDIA GPU webcam background removal"
+        description="Offscene — NVIDIA GPU webcam background removal"
     )
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()

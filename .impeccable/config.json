@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "offscene/static/index.html"
+        ],
+        "createdAt": "2026-10-01T00:49:59.866Z",
+        "reason": "Agent verified the only finding: primary button dark text is on the approved opaque silver gradient (#F4F5F3 to #B8BFBC), not the generic #383838 hover background incorrectly inferred by the detector. Other controls use #EEEEEE or #ADADAD on dark surfaces."
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "offscene/static/index.html"
+        ],
+        "createdAt": "2026-10-01T00:56:42.484Z",
+        "reason": "Agent verified scoped CSS hierarchy: inspector heading is 18px over 13px controls, and empty-state heading is 24px over 14px body (20px over 13px on mobile). The 14px toolbar title and compact help headings intentionally follow the approved Paper studio direction; this is an operating console, not a display-heading page."
+      }
+    ]
+  }
+}

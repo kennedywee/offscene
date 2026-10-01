@@ -1,5 +1,5 @@
 [project]
-name = "clearcam"
+name = "offscene"
 version = "0.1.0"
 description = "Local NVIDIA GPU webcam matting and virtual camera for Linux"
 requires-python = ">=3.12,<3.13"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-clearcam = "clearcam.server:main"
+offscene = "offscene.server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -29,3 +29,6 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["offscene"]

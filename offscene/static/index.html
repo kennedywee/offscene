@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#151515" />
+    <meta
+      name="description"
+      content="Offscene — local GPU webcam background removal and virtual camera for Linux."
+    />
+    <title>Offscene · Camera studio</title>
+    <link rel="icon" type="image/svg+xml" href="/static/offscene.svg" />
+    <link
+      rel="preload"
+      href="/static/fonts/public-sans-regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/dropdown.js" defer></script>
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Offscene home"
+        ><span class="brand-switch" aria-hidden="true"><span>off</span></span
+        ><span aria-hidden="true">scene</span></a
+      >
+      <h1>Camera studio</h1>
+      <div class="session-actions">
+        <span class="phase"
+          ><span class="dot" id="live-dot"></span
+          ><span id="phase" role="status">Camera off</span></span
+        ><button id="start" class="primary" disabled>Start camera</button>
+      </div>
+    </header>
+    <main class="workspace">
+      <section class="monitor" aria-label="Camera preview">
+        <div class="source-bar">
+          <div class="source-fields">
+            <div class="camera-field">
+              <label class="sr-only" id="camera-field-label" for="camera"
+                >Camera</label
+              ><button
+                id="camera"
+                class="dropdown-trigger"
+                type="button"
+                role="combobox"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="camera-options"
+                data-capture
+              >
+                <span class="dropdown-value">Detecting cameras…</span
+                ><svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="m4 6 4 4 4-4" />
+                </svg>
+              </button>
+              <div
+                id="camera-options"
+                class="dropdown-menu"
+                role="listbox"
+                aria-labelledby="camera-field-label"
+                popover="auto"
+              >
+                <div
+                  role="option"
+                  data-value="/dev/video0"
+                  aria-selected="false"
+                >
+                  Detecting cameras…
+                </div>
+              </div>
+            </div>
+            <div>
+              <label
+                class="sr-only"
+                id="resolution-field-label"
+                for="resolution"
+                >Resolution</label
+              ><button
+                id="resolution"
+                class="dropdown-trigger"
+                type="button"
+                role="combobox"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="resolution-options"
+                data-capture
+              >
+                <span class="dropdown-value">720p HD</span
+                ><svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="m4 6 4 4 4-4" />
+                </svg>
+              </button>
+              <div
+                id="resolution-options"
+                class="dropdown-menu"
+                role="listbox"
+                aria-labelledby="resolution-field-label"
+                popover="auto"
+              >
+                <div role="option" data-value="1280x720" aria-selected="false">
+                  720p HD
+                </div>
+                <div role="option" data-value="1920x1080" aria-selected="false">
+                  1080p Full HD
+                </div>
+                <div role="option" data-value="2560x1440" aria-selected="false">
+                  1440p QHD · 30 fps
+                </div>
+                <div role="option" data-value="3840x2160" aria-selected="false">
+                  4K UHD · 30 fps
+                </div>
+              </div>
+            </div>
+            <div>
+              <label
+                class="sr-only"
+                id="fps-select-field-label"
+                for="fps-select"
+                >Frame rate</label
+              ><button
+                id="fps-select"
+                class="dropdown-trigger"
+                type="button"
+                role="combobox"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="fps-select-options"
+                data-capture
+              >
+                <span class="dropdown-value">30 fps</span
+                ><svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="m4 6 4 4 4-4" />
+                </svg>
+              </button>
+              <div
+                id="fps-select-options"
+                class="dropdown-menu"
+                role="listbox"
+                aria-labelledby="fps-select-field-label"
+                popover="auto"
+              >
+                <div role="option" data-value="30" aria-selected="false">
+                  30 fps
+                </div>
+                <div role="option" data-value="60" aria-selected="false">
+                  60 fps
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="segmented" aria-label="Preview view">
+            <button data-view="original" aria-pressed="false">Original</button
+            ><button data-view="output" aria-pressed="true">Output</button
+            ><button data-view="matte" aria-pressed="false">Matte</button>
+          </div>
+        </div>
+        <div class="viewport" id="viewport">
+          <img
+            id="preview-image"
+            src="/static/camera-off.svg"
+            alt="Live camera preview"
+            hidden
+          />
+          <div class="empty" id="empty">
+            <svg viewBox="0 0 64 64" aria-hidden="true">
+              <rect x="12" y="19" width="29" height="26" rx="6" />
+              <path d="m41 27 12-7v24l-12-7M10 10l44 44" />
+            </svg>
+            <h2 id="empty-title">Your camera is off</h2>
+            <p id="empty-copy">
+              Choose your background, then start your camera. Everything is
+              processed locally on your GPU.
+            </p>
+          </div>
+          <span class="preview-label" id="preview-label" hidden
+            >PROCESSED OUTPUT</span
+          >
+        </div>
+        <div class="background-desk">
+          <div class="desk-heading">
+            <h2>Background</h2>
+            <p>Visible in Output</p>
+          </div>
+          <div class="effects">
+            <button data-effect="blur" aria-pressed="true">
+              <span class="effect-art blur-art" aria-hidden="true"></span
+              >Blur</button
+            ><button data-effect="color" aria-pressed="false">
+              <span class="effect-art color-art" aria-hidden="true"></span>Solid
+              color</button
+            ><button data-effect="image" aria-pressed="false">
+              <span class="effect-art image-art" aria-hidden="true"></span
+              >Choose image
+            </button>
+          </div>
+          <label class="mirror"
+            ><input type="checkbox" id="mirror" checked />Mirror preview</label
+          >
+        </div>
+        <div class="notice" id="error" role="alert" hidden></div>
+        <div class="notice warning" id="warning" role="status" hidden></div>
+      </section>
+      <aside class="controls" aria-label="Camera settings">
+        <div class="inspector-heading">
+          <h2>Adjustments</h2>
+          <div class="segmented" role="tablist" aria-label="Adjustments">
+            <button
+              id="background-tab"
+              role="tab"
+              aria-selected="true"
+              aria-controls="background-panel"
+              data-panel="background"
+            >
+              Background</button
+            ><button
+              id="camera-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="camera-panel"
+              data-panel="camera"
+              tabindex="-1"
+            >
+              Camera
+            </button>
+          </div>
+        </div>
+        <section
+          id="background-panel"
+          class="control-section"
+          role="tabpanel"
+          aria-labelledby="background-tab"
+        >
+          <div id="blur-control">
+            <label for="blur" class="range-label"
+              >Blur strength <output id="blur-value">55%</output></label
+            ><input id="blur" type="range" min="10" max="100" value="55" />
+          </div>
+          <div id="color-control" hidden>
+            <label for="color">Background color</label>
+            <div class="color-row">
+              <input type="color" id="color" value="#182226" /><span
+                >Use green for chroma key in OBS.</span
+              >
+            </div>
+          </div>
+          <div id="image-control" hidden>
+            <label for="background-file" class="upload"
+              >Choose background image<input
+                type="file"
+                id="background-file"
+                accept="image/png,image/jpeg,image/webp"
+            /></label>
+            <p class="help" id="upload-help">JPEG, PNG or WebP · up to 12 MB</p>
+          </div>
+          <label for="cleanup" class="range-label"
+            >Background suppression
+            <output id="cleanup-value">8%</output></label
+          ><input id="cleanup" type="range" min="0" max="80" value="8" />
+          <p class="help">
+            Increase to reject background leakage. High values can remove fine
+            hair and translucent edges.
+          </p>
+          <label for="shrink" class="range-label"
+            >Trim edge <output id="shrink-value">1 px</output></label
+          >
+          <input id="shrink" type="range" min="0" max="4" value="1" />
+        </section>
+        <section
+          id="camera-panel"
+          class="control-section"
+          role="tabpanel"
+          aria-labelledby="camera-tab"
+          hidden
+        >
+          <div class="section-title">
+            <h2>Capture settings</h2>
+            <button
+              class="text-button"
+              id="refresh"
+              aria-label="Refresh cameras"
+            >
+              Refresh
+            </button>
+          </div>
+          <p class="help">
+            Stop the camera to change the source, resolution, frame rate,
+            exposure, or model.
+          </p>
+          <label id="exposure-field-label" for="exposure">Exposure</label>
+          <button
+            id="exposure"
+            class="dropdown-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="exposure-options"
+            data-capture
+          >
+            <span class="dropdown-value">Auto · adjusts for lighting</span
+            ><svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m4 6 4 4 4-4" />
+            </svg>
+          </button>
+          <div
+            id="exposure-options"
+            class="dropdown-menu"
+            role="listbox"
+            aria-labelledby="exposure-field-label"
+            popover="auto"
+          >
+            <div role="option" data-value="auto" aria-selected="false">
+              Auto · adjusts for lighting
+            </div>
+            <div role="option" data-value="motion" aria-selected="false">
+              Motion priority · shorter shutter
+            </div>
+            <div role="option" data-value="preserve" aria-selected="false">
+              Keep camera settings
+            </div>
+          </div>
+          <p class="help" id="capture-status">
+            Motion priority limits exposure for smoother video but may darken
+            the image. Previous camera settings are restored on stop.
+          </p>
+        </section>
+        <section class="control-section">
+          <h2>Processing</h2>
+          <label id="model-field-label" for="model">Matting model</label>
+          <button
+            id="model"
+            class="dropdown-trigger"
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="model-options"
+            data-capture
+          >
+            <span class="dropdown-value">ResNet50 · higher quality</span
+            ><svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m4 6 4 4 4-4" />
+            </svg>
+          </button>
+          <div
+            id="model-options"
+            class="dropdown-menu"
+            role="listbox"
+            aria-labelledby="model-field-label"
+            popover="auto"
+          >
+            <div role="option" data-value="resnet50" aria-selected="false">
+              ResNet50 · higher quality
+            </div>
+            <div role="option" data-value="mobilenetv3" aria-selected="false">
+              MobileNetV3 · faster
+            </div>
+          </div>
+          <span class="field-label" id="quality-label">Analysis quality</span>
+          <div
+            class="segmented quality-toggle"
+            role="radiogroup"
+            aria-labelledby="quality-label"
+          >
+            <label
+              ><input
+                class="sr-only"
+                type="radio"
+                name="quality"
+                value="balanced"
+                checked
+              /><span>Balanced</span></label
+            >
+            <label
+              ><input
+                class="sr-only"
+                type="radio"
+                name="quality"
+                value="detail"
+              /><span>Detail</span></label
+            >
+          </div>
+        </section>
+        <section class="control-section output-section">
+          <div class="section-title">
+            <h2>Virtual camera</h2>
+            <label class="switch" aria-label="Enable virtual camera"
+              ><input
+                id="virtual-camera"
+                type="checkbox"
+                role="switch"
+                aria-label="Enable virtual camera" /><span></span
+            ></label>
+          </div>
+          <label for="output-device">Output device</label
+          ><input
+            id="output-device"
+            type="text"
+            value="/dev/video10"
+            pattern="/dev/video[0-9]+"
+            data-capture
+          />
+          <p id="output-status" class="help">
+            Enable to send the processed video to your meeting or streaming app.
+          </p>
+        </section>
+      </aside>
+    </main>
+    <footer>
+      <div class="telemetry" aria-label="Performance">
+        <span>Capture <strong id="capture-fps">—</strong> fps</span
+        ><span>Output <strong id="fps">—</strong> fps</span
+        ><span>Preview <strong id="preview-fps">—</strong> fps</span
+        ><span>Processing <strong id="latency">—</strong> ms</span>
+      </div>
+      <div class="gpu-info">
+        <span id="gpu">Local GPU processing</span>
+        <button
+          id="setup-help"
+          class="icon-button"
+          type="button"
+          popovertarget="setup-popover"
+          aria-haspopup="dialog"
+          aria-label="Studio help"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path
+              d="M9.5 9a2.5 2.5 0 0 1 5 .5c0 1.5-2.5 2-2.5 3.5M12 16.5h.01"
+            />
+          </svg>
+        </button>
+      </div>
+    </footer>
+    <section
+      id="setup-popover"
+      class="setup-popover"
+      popover="auto"
+      role="dialog"
+      aria-labelledby="setup-title"
+    >
+      <div class="section-title">
+        <h2 id="setup-title">Studio help</h2>
+        <button
+          class="icon-button"
+          type="button"
+          popovertarget="setup-popover"
+          popovertargetaction="hide"
+          aria-label="Close studio help"
+          autofocus
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <section class="help-section" aria-labelledby="preview-help-title">
+        <h3 id="preview-help-title">Preview and output</h3>
+        <p id="resolution-label" hidden></p>
+        <p id="preview-status">
+          Live preview streams up to 1080p. Virtual output uses the full
+          selected resolution.
+        </p>
+      </section>
+      <section class="help-section" aria-labelledby="installation-title">
+        <h3 id="installation-title">First-time Linux setup</h3>
+        <p>
+          Install <code>v4l2loopback-dkms</code> and matching kernel headers.
+          Then run:
+        </p>
+        <code class="command"
+          >sudo modprobe v4l2loopback video_nr=10 card_label=Offscene
+          exclusive_caps=1</code
+        >
+        <p>
+          Select <strong>Offscene</strong> as the camera in your call. If the
+          device still says Clearcam, follow the rename steps in the project
+          README; loading an already-loaded module does not change its label.
+        </p>
+      </section>
+    </section>
+  </body>
+</html>
