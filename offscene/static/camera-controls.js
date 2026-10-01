@@ -6,6 +6,42 @@ let cameraControlKey = "";
 let cameraControlsLoading = false;
 let cameraControlsBusy = false;
 let cameraControlRevision = 0;
+let cameraPresets = [];
+
+async function loadCameraPresets() {
+  try {
+    cameraPresets = await (await api("camera-presets")).json();
+    $("camera-presets").replaceChildren(...cameraPresets.map((preset) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = preset.label;
+      button.dataset.cameraPreset = preset.id;
+      const check = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      check.setAttribute("viewBox", "0 0 16 16");
+      check.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "m3 8 3.5 3.5L13 4.5");
+      check.append(path);
+      button.append(check);
+      button.addEventListener("click", () =>
+        changeCameraControls({}, undefined, { preset: preset.id }),
+      );
+      return button;
+    }));
+    $("camera-look-help").replaceChildren(...cameraPresets.flatMap((preset) => {
+      const name = document.createElement("dt");
+      const description = document.createElement("dd");
+      name.textContent = preset.label;
+      description.textContent = preset.description;
+      return [name, description];
+    }));
+    $("camera-preset-description").className = "sr-only";
+    updateCameraControlState();
+  } catch (error) {
+    $("camera-preset-description").textContent = error.message;
+    $("camera-preset-description").className = "help";
+  }
+}
 
 function controlScale(name) {
   if (name === "digital_zoom") return 100;
@@ -19,6 +55,7 @@ function changeCameraValue(name, value) {
 }
 
 function drawCameraControls(data) {
+  cameraGroups.set("Exposure", $("camera-exposure-group"));
   data.controls = {
     ...data.controls,
     digital_zoom: {
@@ -49,13 +86,7 @@ function drawCameraControls(data) {
       label.htmlFor = id;
       label.textContent =
         control.label +
-        (name === "exposure_time_absolute"
-          ? " · ms"
-          : name === "digital_zoom"
-            ? " · ×"
-            : name === "white_balance_temperature"
-              ? " · K"
-              : "");
+        (name === "exposure_time_absolute" ? " · ms" : "");
       row.append(label);
       let input, number, dropdown;
       if (control.type === "toggle") {
@@ -152,6 +183,21 @@ function drawCameraControls(data) {
 
 function updateCameraControlState() {
   const running = state?.phase === "running";
+  document.querySelectorAll("[data-camera-preset]").forEach((button) => {
+    button.disabled = !running || cameraControlsBusy ||
+      !Object.values(cameraControlData).some((c) => c.group === "Image" && !c.readonly && !c.inactive);
+    button.setAttribute("aria-pressed", String(button.dataset.cameraPreset === state?.settings.camera_preset));
+  });
+  $("camera-preset-undo").hidden = !state?.can_undo_camera_preset;
+  $("camera-preset-undo").disabled = !running || cameraControlsBusy;
+  $("camera-custom").hidden = state?.settings.camera_preset !== "custom";
+  $("camera-presets").setAttribute("aria-busy", String(cameraControlsBusy));
+  if (cameraPresets.length && !cameraControlsBusy) {
+    const selected = cameraPresets.find((p) => p.id === state?.settings.camera_preset);
+    $("camera-preset-description").textContent = selected
+      ? `${selected.label} selected.`
+      : "Custom settings.";
+  }
   $("camera-reset").disabled =
     !running || cameraControlsBusy ||
     !Object.values(cameraControlData).some((control) => !control.readonly);
@@ -202,13 +248,15 @@ async function loadCameraControls() {
     drawCameraControls(data);
     $("camera-controls-status").textContent = Object.keys(data.controls).length
       ? state.phase === "running"
-        ? "Changes are saved for this camera. Hardware settings are restored on stop."
-        : "Start the camera to adjust its controls."
+        ? ""
+        : "Start camera to adjust."
       : "This webcam does not expose adjustable camera controls.";
+    $("camera-controls-status").hidden = !$("camera-controls-status").textContent;
   } catch (error) {
     cameraControlData = {};
     updateCameraControlState();
     $("camera-controls-status").textContent = error.message;
+    $("camera-controls-status").hidden = false;
   } finally {
     cameraControlsLoading = false;
   }
@@ -223,17 +271,18 @@ function syncCameraControls(next) {
   }
 }
 
-function changeCameraControls(values, exposure, { reset = false } = {}) {
+function changeCameraControls(values, exposure, { reset = false, preset = null } = {}) {
   cameraControlRevision++;
   cameraControlsBusy = true;
   updateCameraControlState();
-  if (reset) $("camera-reset").textContent = "Resetting camera…";
+  if (reset) $("camera-reset").textContent = "Resetting…";
+  if (preset) $("camera-preset-description").textContent = preset === "undo" ? "Restoring previous look…" : "Applying camera look…";
   settingsQueue = settingsQueue.then(async () => {
     try {
       const data = await (
-        await api(reset ? "camera-controls/reset" : "camera-controls", {
-          method: reset ? "POST" : "PATCH",
-          ...(reset ? {} : {
+        await api(preset ? `camera-presets/${preset}` : reset ? "camera-controls/reset" : "camera-controls", {
+          method: reset || preset ? "POST" : "PATCH",
+          ...(reset || preset ? {} : {
             body: JSON.stringify({ values, ...(exposure ? { exposure } : {}) }),
           }),
         })
@@ -247,7 +296,7 @@ function changeCameraControls(values, exposure, { reset = false } = {}) {
       dropdowns.get("exposure").setValue(state.settings.exposure);
     } finally {
       cameraControlsBusy = false;
-      $("camera-reset").textContent = "Reset camera to defaults";
+      $("camera-reset").textContent = "Reset";
       await loadCameraControls();
       updateCameraControlState();
     }
@@ -256,6 +305,10 @@ function changeCameraControls(values, exposure, { reset = false } = {}) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  loadCameraPresets();
+  $("camera-preset-undo").addEventListener("click", () =>
+    changeCameraControls({}, undefined, { preset: "undo" }),
+  );
   $("camera-reset").addEventListener("click", () =>
     changeCameraControls({}, undefined, { reset: true }),
   );
@@ -264,7 +317,10 @@ document.addEventListener("DOMContentLoaded", () => {
       changeCameraControls({}, event.target.value);
     else patch({ exposure: event.target.value });
   });
-  $("refresh").addEventListener("click", loadCameraControls);
+  $("refresh").addEventListener("click", () => {
+    loadCameraControls();
+    if (!cameraPresets.length) loadCameraPresets();
+  });
   setInterval(() => {
     if (!document.hidden && !$("camera-panel").hidden) loadCameraControls();
   }, 2000);

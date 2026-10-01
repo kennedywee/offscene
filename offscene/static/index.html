@@ -58,6 +58,9 @@
                   <path d="m4 6 4 4 4-4" />
                 </svg>
               </button>
+              <button id="refresh" class="icon-button" type="button" aria-label="Refresh cameras" title="Refresh cameras">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.5-2L20 8M4 16l2.4 3A7 7 0 0 0 17.9 17" /></svg>
+              </button>
               <div
                 id="camera-options"
                 class="dropdown-menu"
@@ -287,67 +290,57 @@
           aria-labelledby="camera-tab"
           hidden
         >
-          <div class="section-title">
-            <h2>Camera controls</h2>
-            <button
-              class="text-button"
-              id="refresh"
-              aria-label="Refresh cameras"
-            >
-              Refresh
-            </button>
-          </div>
-          <p class="help">
-            Adjust camera controls live. Stop to change the source, resolution,
-            frame rate, or model.
-          </p>
-          <button id="camera-reset" type="button" aria-describedby="camera-reset-help" disabled>
-            Reset camera to defaults
-          </button>
-          <p class="help" id="camera-reset-help">
-            Restore exposure, white balance, lens, and image controls to this camera’s defaults, and digital zoom to 1×.
-          </p>
-          <label id="exposure-field-label" for="exposure">Exposure mode</label>
-          <button
-            id="exposure"
-            class="dropdown-trigger"
-            type="button"
-            role="combobox"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-            aria-controls="exposure-options"
-          >
-            <span class="dropdown-value">Auto · adjusts for lighting</span
-            ><svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="m4 6 4 4 4-4" />
-            </svg>
-          </button>
-          <div
-            id="exposure-options"
-            class="dropdown-menu"
-            role="listbox"
-            aria-labelledby="exposure-field-label"
-            popover="auto"
-          >
-            <div role="option" data-value="auto" aria-selected="false">
-              Auto · adjusts for lighting
-            </div>
-            <div role="option" data-value="motion" aria-selected="false">
-              Motion priority · shorter shutter
-            </div>
-            <div role="option" data-value="manual" aria-selected="false">
-              Manual · set shutter time
-            </div>
-            <div role="option" data-value="preserve" aria-selected="false">
-              Keep current exposure
+          <div class="camera-look-heading">
+            <h2 id="camera-preset-label">Look <span id="camera-custom" hidden>Custom</span></h2>
+            <div class="camera-actions">
+              <button id="camera-preset-undo" type="button" aria-label="Undo camera look" title="Undo camera look" hidden>Undo</button>
+              <button id="camera-reset" type="button" aria-label="Reset all camera settings" title="Reset all camera settings" disabled>Reset</button>
             </div>
           </div>
-          <p class="help" id="capture-status">
-            Motion priority limits exposure for smoother video but may darken
-            the image. Previous camera settings are restored on stop.
-          </p>
-          <p class="help" id="camera-controls-status" role="status">Loading camera controls…</p>
-          <div id="camera-controls"></div>
+          <div id="camera-presets" class="camera-presets" role="group" aria-labelledby="camera-preset-label"></div>
+          <p id="camera-preset-description" class="sr-only" role="status">Loading looks…</p>
+          <p class="help" id="camera-controls-status" role="status" hidden></p>
+          <div id="camera-controls">
+            <fieldset id="camera-exposure-group" class="camera-group">
+              <legend>Exposure</legend>
+              <label id="exposure-field-label" class="sr-only" for="exposure">Exposure mode</label>
+              <button
+                id="exposure"
+                class="dropdown-trigger"
+                type="button"
+                role="combobox"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="exposure-options"
+              >
+                <span class="dropdown-value">Auto</span
+                ><svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="m4 6 4 4 4-4" />
+                </svg>
+              </button>
+              <div
+                id="exposure-options"
+                class="dropdown-menu"
+                role="listbox"
+                aria-labelledby="exposure-field-label"
+                popover="auto"
+              >
+                <div role="option" data-value="auto" aria-selected="false">
+                  Auto
+                </div>
+                <div role="option" data-value="motion" aria-selected="false">
+                  Motion priority
+                </div>
+                <div role="option" data-value="manual" aria-selected="false">
+                  Manual
+                </div>
+                <div role="option" data-value="preserve" aria-selected="false">
+                  Keep current exposure
+                </div>
+              </div>
+              <p class="help" id="capture-status" role="status" hidden></p>
+            </fieldset>
+          </div>
           <p class="help" id="shutter-warning" role="status" hidden></p>
         </section>
         <section
@@ -494,6 +487,13 @@
           Preview uses the full selected output resolution. Mirror preview changes
           only your view; it is off by default.
         </p>
+      </section>
+      <section class="help-section" aria-labelledby="camera-help-title">
+        <h3 id="camera-help-title">Camera controls</h3>
+        <p>Looks adjust color, contrast, and detail. Undo restores the previous look. Reset restores camera defaults and 1× zoom.</p>
+        <p>Auto follows the light. Motion priority uses a shorter shutter. Manual unlocks shutter time.</p>
+        <p>Changes save automatically. Stopping restores the previous device settings. Stop to change the source, resolution, frame rate, or model.</p>
+        <dl id="camera-look-help"></dl>
       </section>
       <section class="help-section" aria-labelledby="installation-title">
         <h3 id="installation-title">First-time Linux setup</h3>

@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from .camera_controls import CONTROLS, CameraControls
+from .camera_presets import preset_values
 
 log = logging.getLogger(__name__)
 CACHE = Path(
@@ -34,6 +35,9 @@ class Settings(BaseModel):
     fps: Literal[30, 60] = 30
     exposure: Literal["auto", "motion", "manual", "preserve"] = "auto"
     zoom: float = Field(default=1.0, ge=1, le=2)
+    camera_preset: Literal[
+        "custom", "natural", "cinematic", "apple", "professional", "polished", "tiktok"
+    ] = "custom"
     camera_controls: dict[str, dict[str, StrictInt]] = Field(default_factory=dict)
     model: Literal["mobilenetv3", "resnet50"] = "resnet50"
     quality: Literal["balanced", "detail"] = "balanced"
@@ -399,6 +403,7 @@ class Engine:
             self.settings.effect = "blur"
         self.thread = None
         self.capture = None
+        self.camera_preset_undo = None
         self.stop_event = threading.Event()
         self.jpeg = None
         self.jpeg_sequence = 0
@@ -440,10 +445,11 @@ class Engine:
                 **self.state,
                 "settings": self.settings.model_dump(),
                 "has_background": self.background is not None,
+                "can_undo_camera_preset": self.camera_preset_undo is not None,
             }
 
     def update(self, patch):
-        if "camera_controls" in patch:
+        if "camera_controls" in patch or "camera_preset" in patch:
             raise ValueError("Use the camera-controls API to adjust the webcam.")
         with self.lock:
             new = Settings.model_validate({**self.settings.model_dump(), **patch})
@@ -464,8 +470,14 @@ class Engine:
                 raise ValueError("Input and output cameras must be different devices.")
             if new.effect == "image" and self.background is None:
                 raise ValueError("Upload a background image first.")
+            camera_changed = new.camera != self.settings.camera
+            preset_invalidated = camera_changed or new.exposure != self.settings.exposure
+            if preset_invalidated:
+                new.camera_preset = "custom"
             self._save_settings(new)
             self.settings = new
+            if preset_invalidated:
+                self.camera_preset_undo = None
         return self.status()
 
     def _save_settings(self, settings):
@@ -491,7 +503,7 @@ class Engine:
             finally:
                 controls.close()
 
-    def update_camera_controls(self, values, exposure=None):
+    def update_camera_controls(self, values, exposure=None, *, preset="custom"):
         with self.lock:
             if (
                 self.state["phase"] != "running"
@@ -534,7 +546,7 @@ class Engine:
                 profile.pop("auto_exposure", None)
             profile.update(values)
             new = self.settings.model_copy(
-                update={"camera_controls": profiles, "exposure": mode}
+                update={"camera_controls": profiles, "exposure": mode, "camera_preset": preset}
             )
             applied = dict(profile)
             if mode != "manual":
@@ -546,8 +558,29 @@ class Engine:
                 persist=lambda: self._save_settings(new),
             )
             self.settings = new
+            self.camera_preset_undo = None
             self.capture.warning = None
             return {"device": new.camera, "controls": result, "state": self.status()}
+
+    def apply_camera_preset(self, name):
+        with self.lock:
+            available = self.camera_control_info()["controls"]
+            values = preset_values(name, available)
+            previous = {
+                "values": {key: available[key]["value"] for key in values},
+                "preset": self.settings.camera_preset,
+            }
+            result = self.update_camera_controls(values, preset=name)
+            self.camera_preset_undo = previous
+            result["state"] = self.status()
+            return result
+
+    def undo_camera_preset(self):
+        with self.lock:
+            if self.camera_preset_undo is None:
+                raise ValueError("There is no camera look to undo.")
+            previous = self.camera_preset_undo
+            return self.update_camera_controls(previous["values"], preset=previous["preset"])
 
     def reset_camera_controls(self):
         with self.lock:
@@ -570,10 +603,12 @@ class Engine:
                 new = self.settings.model_copy(
                     update={
                         "camera_controls": profiles, "exposure": exposure, "zoom": 1.0,
+                        "camera_preset": "custom",
                     }
                 )
                 self._save_settings(new)
                 self.settings = new
+                self.camera_preset_undo = None
 
             result = self.capture.controls.reset(persist=persist)
             self.capture.warning = None

@@ -84,9 +84,10 @@ function render(next, sync = false) {
   if (!running) $("preview-fps").textContent = "—";
   $("capture-status").textContent =
     next.capture_warning ||
-    (running
-      ? `Webcam capture: ${next.capture_fps.toFixed(1)} fps.${next.capture_fps > 0 && next.capture_fps < next.settings.fps * 0.8 ? " Capture is below the requested rate; check lighting and exposure." : ""}`
-      : "Motion priority limits exposure for smoother video but may darken the image. Previous camera settings are restored on stop.");
+    (running && next.capture_fps > 0 && next.capture_fps < next.settings.fps * 0.8
+      ? `Capture below ${next.settings.fps} fps. Check exposure or lighting.`
+      : "");
+  $("capture-status").hidden = !$("capture-status").textContent;
   $("resolution-label").hidden = !running;
   $("resolution-label").textContent = running
     ? `${next.resolution} · ${next.settings.fps} fps requested`

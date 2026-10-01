@@ -25,6 +25,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .camera_presets import PRESETS
 from .engine import Engine, devices
 
 engine = Engine()
@@ -96,6 +97,22 @@ def camera_controls():
 def camera_control_update(patch: CameraControlPatch):
     try:
         return engine.update_camera_controls(patch.values, patch.exposure)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/camera-presets")
+def camera_presets():
+    return [
+        {"id": key, "label": value["label"], "description": value["description"]}
+        for key, value in PRESETS.items()
+    ]
+
+
+@app.post("/api/camera-presets/{name}")
+def camera_preset_apply(name: str):
+    try:
+        return engine.undo_camera_preset() if name == "undo" else engine.apply_camera_preset(name)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
