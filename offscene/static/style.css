@@ -811,7 +811,7 @@ footer {
   position: fixed;
   inset: auto;
   margin: 0;
-  padding: 4px;
+  padding: 6px;
   border: 1px solid var(--control-border);
   border-radius: 8px;
   background: var(--raised);
@@ -821,8 +821,14 @@ footer {
   scrollbar-width: thin;
   scrollbar-color: var(--control-border) var(--raised);
 }
+.dropdown-menu:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .dropdown-menu [role="option"] {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 12px;
   min-height: 40px;
@@ -832,18 +838,20 @@ footer {
   cursor: pointer;
   overflow-wrap: anywhere;
 }
-.dropdown-menu [role="option"]::after {
-  content: "";
-  width: 6px;
-  height: 10px;
+.option-check {
+  width: 16px;
+  height: 16px;
   margin-left: auto;
   flex-shrink: 0;
-  border: solid transparent;
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
+  visibility: hidden;
+  fill: none;
+  stroke: var(--metal-base);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.dropdown-menu [aria-selected="true"]::after {
-  border-color: var(--metal-base);
+.dropdown-menu [aria-selected="true"] .option-check {
+  visibility: visible;
 }
 .dropdown-menu [role="option"]:hover,
 .dropdown-menu .active {

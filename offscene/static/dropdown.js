@@ -46,6 +46,22 @@ class Dropdown {
   prepareOptions() {
     this.options.forEach((option, index) => {
       option.id = `${this.trigger.id}-option-${index}`;
+      if (!option.querySelector(".option-check")) {
+        const icon = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "svg",
+        );
+        icon.setAttribute("class", "option-check");
+        icon.setAttribute("viewBox", "0 0 16 16");
+        icon.setAttribute("aria-hidden", "true");
+        const path = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "path",
+        );
+        path.setAttribute("d", "m3 8 3.5 3.5L13 4.5");
+        icon.append(path);
+        option.append(icon);
+      }
     });
   }
 
