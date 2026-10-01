@@ -269,6 +269,7 @@ class Matting:
         self.shape = None
         self.background_key = None
         self.background = None
+        self.upload = None
 
     @torch.inference_mode()
     def process(self, bgr, settings, background=None, background_version=0):
@@ -280,10 +281,16 @@ class Matting:
         if shape != self.shape:
             self.states = [None] * 4
             self.shape = shape
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        if self.upload is None or tuple(self.upload.shape) != bgr.shape:
+            self.upload = torch.empty(bgr.shape, dtype=torch.uint8, pin_memory=True)
+        rgb = self.upload.numpy()
+        cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB, dst=rgb)
         src = (
-            torch.from_numpy(rgb)
-            .to(device="cuda", dtype=torch.float16)
+            self.upload
+            # Upload bytes first. The old blocking device/dtype conversion
+            # converted to FP16 on the CPU and doubled the transfer size.
+            .to(device="cuda", non_blocking=True)
+            .to(dtype=torch.float16)
             .permute(2, 0, 1)
             .unsqueeze(0)
             / 255
@@ -333,7 +340,8 @@ class Matting:
                     ).copy()
                     self.background = (
                         torch.from_numpy(pixels)
-                        .to(device="cuda", dtype=torch.float16)
+                        .to(device="cuda")
+                        .to(dtype=torch.float16)
                         .permute(2, 0, 1)
                         .unsqueeze(0)
                         / 255
@@ -348,13 +356,28 @@ class Matting:
                 self.background_key = key
             replacement = self.background
         composite = foreground * alpha + replacement * (1 - alpha)
-        output = (composite[0].permute(1, 2, 0).clamp(0, 1) * 255).byte().cpu().numpy()
+        # Pack RGB pixels on the GPU. A strided CPU image makes both the
+        # virtual-camera sender and OpenCV repack the entire 4K frame.
+        output = (
+            (composite[0].permute(1, 2, 0).clamp(0, 1) * 255)
+            .byte()
+            .contiguous()
+            .cpu()
+            .numpy()
+        )
+        # The blocking output copy also completes the upload before the next
+        # call reuses its pinned buffer. Returned frames must own their pixels
+        # because preview encoding runs on another thread.
         if settings.preview == "matte":
             preview = (
-                (alpha[0].expand(3, -1, -1).permute(1, 2, 0) * 255).byte().cpu().numpy()
+                (alpha[0].expand(3, -1, -1).permute(1, 2, 0) * 255)
+                .byte()
+                .contiguous()
+                .cpu()
+                .numpy()
             )
         elif settings.preview == "original":
-            preview = rgb
+            preview = rgb.copy()
         else:
             preview = output
         return output, preview

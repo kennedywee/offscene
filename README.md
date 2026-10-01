@@ -85,6 +85,17 @@ On the RTX 3060 Ti, a repeated 1080p frame measured about 11 ms with ResNet50 / 
 
 ## Verified on this machine
 
+The 2026-10-01 frame-transfer optimization was verified on the EMEET Piko / RTX 3060 Ti with two separate three-minute runs after a ten-second warmup. Both used ResNet50 / Detail, Motion priority, blur 74, suppression 0.2, edge trim 2, a visible 1080p browser preview, and a separate OpenCV reader of the full-resolution virtual camera:
+
+| Resolution | Virtual-camera consumer | Browser preview average | Processing mean / p95 | Consumer frame interval p95 / maximum |
+| --- | --- | --- | --- | --- |
+| 3840 × 2160 | 30.015 fps | 30.00 fps | 27.57 / 31.4 ms | 39.86 / 48.92 ms |
+| 2560 × 1440 | 30.015 fps | 30.03 fps | 18.89 / 20.0 ms | 37.21 / 43.49 ms |
+
+Neither run produced a read error or consecutive identical sampled frames. A separate 45-second 4K run with Auto exposure delivered 30.019 fps to the virtual-camera reader. These measurements establish sustained 30 fps under the tested settings, not a guarantee under every GPU workload or lighting condition; Auto exposure can still reduce capture fps in dim light.
+
+RGB pixels now enter a reusable pinned CPU buffer, transfer as bytes, and convert to FP16 on the GPU. The GPU also packs output pixels before download, avoiding full-frame CPU repacking in virtual output and preview. The model, analysis resolution, and image-processing operations are unchanged. Exact pixel comparisons against the previous implementation passed for both models across 720p–4K, blur/color/image backgrounds, and Output/Original/Matte previews; retained preview frames also stayed unchanged when the upload buffer was reused. Camera exposure and saved user settings were preserved.
+
 The Offscene rebrand was checked on 2026-10-01: the old project installation and build artifacts were replaced, the virtual environment was regenerated for the renamed directory, and `/dev/video10` reported `Offscene`. Live 1080p preview, a separate ten-frame virtual-camera read, blur/color/image controls, image upload, Original/Matte preview, keyboard adjustment tabs, and stop/restart passed. Desktop (1920 × 1080), mobile (375 × 812), and landscape (812 × 375) had no horizontal overflow. The renamed API header was accepted; missing and old headers were rejected. Settings were restored and the camera stopped after verification. Python compilation, Ruff, JavaScript syntax checks, and wheel/source builds passed.
 
 Live 720p and 1080p capture, blur/color/image replacement, background upload through the browser, matte preview, and stop/restart were exercised. After installing v4l2loopback, a separate OpenCV consumer read ten processed 720p frames from `/dev/video10`; switching the panel to Original preserved the processed virtual output. Missing-device errors kept the preview running. Desktop (1920 × 1080) and mobile (375 × 812) UI checks passed without horizontal overflow. Ruff, JavaScript syntax checks, Python compilation, and wheel/source builds passed. Specific meeting applications and NVIDIA Broadcast quality parity have not been tested.
