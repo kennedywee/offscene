@@ -8,13 +8,28 @@ let cameraControlsBusy = false;
 let cameraControlRevision = 0;
 
 function controlScale(name) {
+  if (name === "digital_zoom") return 100;
   return name === "exposure_time_absolute" ? 10 : 1;
 }
 
+function changeCameraValue(name, value) {
+  return name === "digital_zoom"
+    ? patch({ zoom: value / 100 })
+    : changeCameraControls({ [name]: value });
+}
+
 function drawCameraControls(data) {
+  data.controls = {
+    ...data.controls,
+    digital_zoom: {
+      label: "Digital zoom", group: "Lens", type: "range",
+      min: 100, max: 200, step: 1, default: 100,
+      value: Math.round((state.settings.zoom || 1) * 100),
+    },
+  };
   cameraControlData = data.controls;
   for (const [name, control] of Object.entries(data.controls)) {
-    if (name === "auto_exposure") continue;
+    if (name === "auto_exposure" || name === "zoom_absolute") continue;
     if (!cameraGroups.has(control.group)) {
       const group = document.createElement("fieldset");
       group.className = "camera-group";
@@ -36,9 +51,11 @@ function drawCameraControls(data) {
         control.label +
         (name === "exposure_time_absolute"
           ? " · ms"
-          : name === "white_balance_temperature"
-            ? " · K"
-            : "");
+          : name === "digital_zoom"
+            ? " · ×"
+            : name === "white_balance_temperature"
+              ? " · K"
+              : "");
       row.append(label);
       let input, number, dropdown;
       if (control.type === "toggle") {
@@ -76,9 +93,9 @@ function drawCameraControls(data) {
         number.setAttribute("aria-labelledby", label.id);
         number.addEventListener("change", () => {
           if (number.reportValidity() && number.value !== "")
-            changeCameraControls({
-              [name]: Math.round(Number(number.value) * controlScale(name)),
-            });
+            changeCameraValue(
+              name, Math.round(Number(number.value) * controlScale(name)),
+            );
         });
         input.addEventListener("input", () => {
           number.value = Number(input.value) / controlScale(name);
@@ -89,12 +106,10 @@ function drawCameraControls(data) {
       input.id = id;
       input.setAttribute("aria-labelledby", label.id);
       input.addEventListener("change", () =>
-        changeCameraControls({
-          [name]:
-            control.type === "toggle"
-              ? Number(input.checked)
-              : Number(input.value),
-        }),
+        changeCameraValue(
+          name,
+          control.type === "toggle" ? Number(input.checked) : Number(input.value),
+        ),
       );
       cameraGroups.get(control.group).append(row);
       if (control.type === "menu") {
@@ -137,6 +152,9 @@ function drawCameraControls(data) {
 
 function updateCameraControlState() {
   const running = state?.phase === "running";
+  $("camera-reset").disabled =
+    !running || cameraControlsBusy ||
+    !Object.values(cameraControlData).some((control) => !control.readonly);
   for (const [name, field] of cameraFields) {
     const control = cameraControlData[name];
     field.row.hidden = !control;
@@ -205,16 +223,19 @@ function syncCameraControls(next) {
   }
 }
 
-function changeCameraControls(values, exposure) {
+function changeCameraControls(values, exposure, { reset = false } = {}) {
   cameraControlRevision++;
   cameraControlsBusy = true;
   updateCameraControlState();
+  if (reset) $("camera-reset").textContent = "Resetting camera…";
   settingsQueue = settingsQueue.then(async () => {
     try {
       const data = await (
-        await api("camera-controls", {
-          method: "PATCH",
-          body: JSON.stringify({ values, ...(exposure ? { exposure } : {}) }),
+        await api(reset ? "camera-controls/reset" : "camera-controls", {
+          method: reset ? "POST" : "PATCH",
+          ...(reset ? {} : {
+            body: JSON.stringify({ values, ...(exposure ? { exposure } : {}) }),
+          }),
         })
       ).json();
       uiError = null;
@@ -226,6 +247,7 @@ function changeCameraControls(values, exposure) {
       dropdowns.get("exposure").setValue(state.settings.exposure);
     } finally {
       cameraControlsBusy = false;
+      $("camera-reset").textContent = "Reset camera to defaults";
       await loadCameraControls();
       updateCameraControlState();
     }
@@ -234,6 +256,9 @@ function changeCameraControls(values, exposure) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  $("camera-reset").addEventListener("click", () =>
+    changeCameraControls({}, undefined, { reset: true }),
+  );
   $("exposure").addEventListener("change", (event) => {
     if (state?.phase === "running")
       changeCameraControls({}, event.target.value);

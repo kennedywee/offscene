@@ -33,6 +33,7 @@ class Settings(BaseModel):
     resolution: Literal["1280x720", "1920x1080", "2560x1440", "3840x2160"] = "1920x1080"
     fps: Literal[30, 60] = 30
     exposure: Literal["auto", "motion", "manual", "preserve"] = "auto"
+    zoom: float = Field(default=1.0, ge=1, le=2)
     camera_controls: dict[str, dict[str, StrictInt]] = Field(default_factory=dict)
     model: Literal["mobilenetv3", "resnet50"] = "resnet50"
     quality: Literal["balanced", "detail"] = "balanced"
@@ -191,6 +192,16 @@ class LatestCamera:
         self.thread.join(timeout=3)
 
 
+def zoom_bounds(width, height, zoom):
+    cropped_width, cropped_height = round(width / zoom), round(height / zoom)
+    return (
+        (width - cropped_width) // 2,
+        (height - cropped_height) // 2,
+        cropped_width,
+        cropped_height,
+    )
+
+
 class PreviewEncoder:
     """Encode the latest frame independently; JPEG work never stalls GPU output."""
 
@@ -203,20 +214,24 @@ class PreviewEncoder:
         )
         self.thread.start()
 
-    def submit(self, frame, *, bgr=False):
+    def submit(self, frame, *, bgr=False, zoom=1.0):
         try:
             self.frames.get_nowait()
         except queue.Empty:
             pass
-        self.frames.put_nowait((frame, bgr))
+        self.frames.put_nowait((frame, bgr, zoom))
 
     def _run(self):
         while not self.stop_event.is_set():
             try:
-                frame, bgr = self.frames.get(timeout=0.2)
+                frame, bgr, zoom = self.frames.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
+                if zoom != 1:
+                    height, width = frame.shape[:2]
+                    x, y, w, h = zoom_bounds(width, height, zoom)
+                    frame = cv2.resize(frame[y : y + h, x : x + w], (width, height))
                 ok, encoded = cv2.imencode(
                     ".jpg",
                     frame if bgr else cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
@@ -254,7 +269,7 @@ class Matting:
         ratio = min(
             1.0, (768 if settings.quality == "detail" else 512) / max(width, height)
         )
-        shape = (height, width, ratio)
+        shape = (height, width, ratio, settings.zoom)
         if shape != self.shape:
             self.states = [None] * 4
             self.shape = shape
@@ -272,6 +287,14 @@ class Matting:
             .unsqueeze(0)
             / 255
         )
+        if settings.zoom != 1:
+            x, y, w, h = zoom_bounds(width, height, settings.zoom)
+            src = F.interpolate(
+                src[:, :, y : y + h, x : x + w],
+                size=(height, width),
+                mode="bilinear",
+                align_corners=False,
+            )
         foreground, alpha, *self.states = self.model(src, *self.states, ratio)
         alpha = ((alpha - settings.cleanup) / (1 - settings.cleanup)).clamp(0, 1)
         if settings.shrink:
@@ -507,6 +530,8 @@ class Engine:
                     )
             profiles = {k: dict(v) for k, v in self.settings.camera_controls.items()}
             profile = profiles.setdefault(self.settings.camera, {})
+            if exposure:
+                profile.pop("auto_exposure", None)
             profile.update(values)
             new = self.settings.model_copy(
                 update={"camera_controls": profiles, "exposure": mode}
@@ -523,6 +548,40 @@ class Engine:
             self.settings = new
             self.capture.warning = None
             return {"device": new.camera, "controls": result, "state": self.status()}
+
+    def reset_camera_controls(self):
+        with self.lock:
+            if (
+                self.state["phase"] != "running"
+                or not self.capture
+                or not self.capture.controls
+            ):
+                raise ValueError("Start the camera to reset its controls.")
+
+            def persist(defaults):
+                profile = dict(defaults)
+                exposure = {0: "auto", 1: "manual", 3: "auto"}.get(
+                    profile.get("auto_exposure"), "preserve"
+                )
+                if exposure != "preserve":
+                    profile.pop("auto_exposure", None)
+                profiles = dict(self.settings.camera_controls)
+                profiles[self.settings.camera] = profile
+                new = self.settings.model_copy(
+                    update={
+                        "camera_controls": profiles, "exposure": exposure, "zoom": 1.0,
+                    }
+                )
+                self._save_settings(new)
+                self.settings = new
+
+            result = self.capture.controls.reset(persist=persist)
+            self.capture.warning = None
+            return {
+                "device": self.settings.camera,
+                "controls": result,
+                "state": self.status(),
+            }
 
     def start(self):
         with self.lock:
@@ -637,7 +696,7 @@ class Engine:
                 if settings.preview == "original":
                     # Capture owns this BGR array; encoding it directly avoids
                     # copying the upload buffer and converting RGB back to BGR.
-                    encoder.submit(frame, bgr=True)
+                    encoder.submit(frame, bgr=True, zoom=settings.zoom)
                 else:
                     encoder.submit(preview)
                 count += 1

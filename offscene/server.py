@@ -100,6 +100,14 @@ def camera_control_update(patch: CameraControlPatch):
         raise HTTPException(422, str(exc)) from exc
 
 
+@app.post("/api/camera-controls/reset")
+def camera_control_reset():
+    try:
+        return engine.reset_camera_controls()
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @app.patch("/api/settings")
 def settings(patch: dict):
     try:

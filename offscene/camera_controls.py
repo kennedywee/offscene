@@ -197,6 +197,42 @@ class CameraControls:
                 self.restore({k: before[k] for k in changed if k in before})
                 raise
 
+    def reset(self, persist=None):
+        """Restore driver defaults, unlocking manual controls before Auto modes."""
+        with self.lock:
+            controls = self.read()
+            modes = {
+                mode: manual
+                for mode, (_, manual) in AUTO.items()
+                if mode in controls
+                and not controls[mode]["readonly"]
+                and not controls[mode]["inactive"]
+                and (
+                    not controls[mode]["options"]
+                    or manual in [o["value"] for o in controls[mode]["options"]]
+                )
+            }
+            unlocked = {AUTO[mode][0] for mode in modes}
+            defaults = {
+                name: control["default"]
+                for name, control in controls.items()
+                if not control["readonly"]
+                and (not control["inactive"] or name in unlocked)
+            }
+            before = {name: controls[name]["value"] for name in defaults}
+            try:
+                for mode, manual in modes.items():
+                    self._write(mode, manual)
+                for name in sorted(defaults, key=lambda key: key in AUTO):
+                    self._write(name, defaults[name])
+                result = self.read()
+                if persist:
+                    persist(defaults)
+                return result
+            except Exception:
+                self.restore(before)
+                raise
+
     def close(self):
         with self.lock:
             if self.fd is not None:
