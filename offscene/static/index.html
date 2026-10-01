@@ -19,6 +19,7 @@
     />
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/dropdown.js" defer></script>
+    <script src="/static/camera-controls.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body>
@@ -198,7 +199,7 @@
             </button>
           </div>
           <label class="mirror"
-            ><input type="checkbox" id="mirror" checked />Mirror preview</label
+            ><input type="checkbox" id="mirror" />Mirror preview</label
           >
         </div>
         <div class="notice" id="error" role="alert" hidden></div>
@@ -225,6 +226,16 @@
               tabindex="-1"
             >
               Camera
+            </button>
+            <button
+              id="processing-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="processing-panel"
+              data-panel="processing"
+              tabindex="-1"
+            >
+              Processing
             </button>
           </div>
         </div>
@@ -277,7 +288,7 @@
           hidden
         >
           <div class="section-title">
-            <h2>Capture settings</h2>
+            <h2>Camera controls</h2>
             <button
               class="text-button"
               id="refresh"
@@ -287,10 +298,10 @@
             </button>
           </div>
           <p class="help">
-            Stop the camera to change the source, resolution, frame rate,
-            exposure, or model.
+            Adjust camera controls live. Stop to change the source, resolution,
+            frame rate, or model.
           </p>
-          <label id="exposure-field-label" for="exposure">Exposure</label>
+          <label id="exposure-field-label" for="exposure">Exposure mode</label>
           <button
             id="exposure"
             class="dropdown-trigger"
@@ -299,7 +310,6 @@
             aria-haspopup="listbox"
             aria-expanded="false"
             aria-controls="exposure-options"
-            data-capture
           >
             <span class="dropdown-value">Auto · adjusts for lighting</span
             ><svg viewBox="0 0 16 16" aria-hidden="true">
@@ -319,94 +329,107 @@
             <div role="option" data-value="motion" aria-selected="false">
               Motion priority · shorter shutter
             </div>
+            <div role="option" data-value="manual" aria-selected="false">
+              Manual · set shutter time
+            </div>
             <div role="option" data-value="preserve" aria-selected="false">
-              Keep camera settings
+              Keep current exposure
             </div>
           </div>
           <p class="help" id="capture-status">
             Motion priority limits exposure for smoother video but may darken
             the image. Previous camera settings are restored on stop.
           </p>
+          <p class="help" id="camera-controls-status" role="status">Loading camera controls…</p>
+          <div id="camera-controls"></div>
+          <p class="help" id="shutter-warning" role="status" hidden></p>
         </section>
-        <section class="control-section">
-          <h2>Processing</h2>
-          <label id="model-field-label" for="model">Matting model</label>
-          <button
-            id="model"
-            class="dropdown-trigger"
-            type="button"
-            role="combobox"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-            aria-controls="model-options"
-            data-capture
-          >
-            <span class="dropdown-value">ResNet50 · higher quality</span
-            ><svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="m4 6 4 4 4-4" />
-            </svg>
-          </button>
-          <div
-            id="model-options"
-            class="dropdown-menu"
-            role="listbox"
-            aria-labelledby="model-field-label"
-            popover="auto"
-          >
-            <div role="option" data-value="resnet50" aria-selected="false">
-              ResNet50 · higher quality
-            </div>
-            <div role="option" data-value="mobilenetv3" aria-selected="false">
-              MobileNetV3 · faster
-            </div>
-          </div>
-          <span class="field-label" id="quality-label">Analysis quality</span>
-          <div
-            class="segmented quality-toggle"
-            role="radiogroup"
-            aria-labelledby="quality-label"
-          >
-            <label
-              ><input
-                class="sr-only"
-                type="radio"
-                name="quality"
-                value="balanced"
-                checked
-              /><span>Balanced</span></label
+        <section
+          id="processing-panel"
+          role="tabpanel"
+          aria-labelledby="processing-tab"
+          hidden
+        >
+          <section class="control-section">
+            <h2>Processing</h2>
+            <label id="model-field-label" for="model">Matting model</label>
+            <button
+              id="model"
+              class="dropdown-trigger"
+              type="button"
+              role="combobox"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="model-options"
+              data-capture
             >
-            <label
-              ><input
-                class="sr-only"
-                type="radio"
-                name="quality"
-                value="detail"
-              /><span>Detail</span></label
+              <span class="dropdown-value">ResNet50 · higher quality</span
+              ><svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="m4 6 4 4 4-4" />
+              </svg>
+            </button>
+            <div
+              id="model-options"
+              class="dropdown-menu"
+              role="listbox"
+              aria-labelledby="model-field-label"
+              popover="auto"
             >
-          </div>
-        </section>
-        <section class="control-section output-section">
-          <div class="section-title">
-            <h2>Virtual camera</h2>
-            <label class="switch" aria-label="Enable virtual camera"
-              ><input
-                id="virtual-camera"
-                type="checkbox"
-                role="switch"
-                aria-label="Enable virtual camera" /><span></span
-            ></label>
-          </div>
-          <label for="output-device">Output device</label
-          ><input
-            id="output-device"
-            type="text"
-            value="/dev/video10"
-            pattern="/dev/video[0-9]+"
-            data-capture
-          />
-          <p id="output-status" class="help">
-            Enable to send the processed video to your meeting or streaming app.
-          </p>
+              <div role="option" data-value="resnet50" aria-selected="false">
+                ResNet50 · higher quality
+              </div>
+              <div role="option" data-value="mobilenetv3" aria-selected="false">
+                MobileNetV3 · faster
+              </div>
+            </div>
+            <span class="field-label" id="quality-label">Analysis quality</span>
+            <div
+              class="segmented quality-toggle"
+              role="radiogroup"
+              aria-labelledby="quality-label"
+            >
+              <label
+                ><input
+                  class="sr-only"
+                  type="radio"
+                  name="quality"
+                  value="balanced"
+                  checked
+                /><span>Balanced</span></label
+              >
+              <label
+                ><input
+                  class="sr-only"
+                  type="radio"
+                  name="quality"
+                  value="detail"
+                /><span>Detail</span></label
+              >
+            </div>
+          </section>
+          <section class="control-section output-section">
+            <div class="section-title">
+              <h2>Virtual camera</h2>
+              <label class="switch" aria-label="Enable virtual camera"
+                ><input
+                  id="virtual-camera"
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Enable virtual camera" /><span></span
+              ></label>
+            </div>
+            <label for="output-device">Output device</label
+            ><input
+              id="output-device"
+              type="text"
+              value="/dev/video10"
+              pattern="/dev/video[0-9]+"
+              data-capture
+            />
+            <p id="output-status" class="help">
+              Enable to send the processed video to your meeting or streaming app.
+            </p>
+          </section>
         </section>
       </aside>
     </main>
@@ -462,8 +485,8 @@
         <h3 id="preview-help-title">Preview and output</h3>
         <p id="resolution-label" hidden></p>
         <p id="preview-status">
-          Live preview streams up to 1080p. Virtual output uses the full
-          selected resolution.
+          Preview uses the full selected output resolution. Mirror preview changes
+          only your view; it is off by default.
         </p>
       </section>
       <section class="help-section" aria-labelledby="installation-title">

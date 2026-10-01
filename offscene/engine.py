@@ -13,7 +13,9 @@ from typing import Literal
 import cv2
 import torch
 import torch.nn.functional as F
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+
+from .camera_controls import CONTROLS, CameraControls
 
 log = logging.getLogger(__name__)
 CACHE = Path(
@@ -30,7 +32,8 @@ class Settings(BaseModel):
     camera: str = Field(default="/dev/video0", pattern=r"^/dev/video\d+$")
     resolution: Literal["1280x720", "1920x1080", "2560x1440", "3840x2160"] = "1920x1080"
     fps: Literal[30, 60] = 30
-    exposure: Literal["auto", "motion", "preserve"] = "auto"
+    exposure: Literal["auto", "motion", "manual", "preserve"] = "auto"
+    camera_controls: dict[str, dict[str, StrictInt]] = Field(default_factory=dict)
     model: Literal["mobilenetv3", "resnet50"] = "resnet50"
     quality: Literal["balanced", "detail"] = "balanced"
     effect: Literal["blur", "color", "image"] = "blur"
@@ -109,11 +112,11 @@ class LatestCamera:
         self.error = None
         self.warning = None
         self.fps = 0.0
+        self.controls = None
         self.thread.start()
 
     def _capture(self):
         cap = cv2.VideoCapture(self.settings.camera, cv2.CAP_V4L2)
-        original_exposure = None
         try:
             if not cap.isOpened():
                 raise RuntimeError(
@@ -136,37 +139,19 @@ class LatestCamera:
                 raise RuntimeError(
                     f"Webcam returned {actual[0]}×{actual[1]} instead of {width}×{height}. Select a supported resolution."
                 )
-            if self.settings.exposure != "preserve":
-                original_exposure = (
-                    cap.get(cv2.CAP_PROP_AUTO_EXPOSURE),
-                    cap.get(cv2.CAP_PROP_EXPOSURE),
+            self.controls = CameraControls(self.settings.camera)
+            # This camera applies exposure reliably only after streaming starts.
+            ok, _ = cap.read()
+            if not ok:
+                raise RuntimeError("Webcam could not start streaming.")
+            try:
+                self.controls.apply(
+                    self.settings.camera_controls.get(self.settings.camera, {}),
+                    exposure=self.settings.exposure,
+                    fps=self.settings.fps,
                 )
-                # This UVC camera only changes its integration interval after
-                # streaming starts, even when pre-stream control readback agrees.
-                ok, _ = cap.read()
-                if not ok:
-                    raise RuntimeError(
-                        "Webcam could not start streaming to configure exposure."
-                    )
-                # Some UVC cameras retain the old manual integration interval
-                # even after switching to auto. Seed a frame-rate-safe interval
-                # first (V4L2 exposure units are 100 microseconds).
-                if (
-                    self.settings.exposure == "motion"
-                    or original_exposure[1] > 7500 / self.settings.fps
-                ):
-                    limited = cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1) and cap.set(
-                        cv2.CAP_PROP_EXPOSURE, int(7500 / self.settings.fps)
-                    )
-                    if not limited:
-                        self.warning = "This webcam could not apply a shorter exposure. Capture may remain below the requested frame rate."
-                # V4L2 exposure enums: 3 = aperture priority, 0 = full auto.
-                if (
-                    self.settings.exposure == "auto"
-                    and not cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
-                    and not cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)
-                ):
-                    self.warning = "This webcam does not support auto exposure through V4L2. Check its exposure settings if capture is slow."
+            except (ValueError, OSError) as exc:
+                self.warning = f"Camera settings could not be applied: {exc}"
             period_start, count = time.perf_counter(), 0
             while not self.stop_event.is_set():
                 ok, frame = cap.read()
@@ -187,13 +172,11 @@ class LatestCamera:
         except (cv2.error, RuntimeError, OSError) as exc:
             self.error = str(exc)
         finally:
-            if original_exposure is not None:
-                mode, exposure = original_exposure
-                if exposure > 0:
-                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
-                    cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
-                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, mode)
-            cap.release()
+            try:
+                if self.controls:
+                    self.controls.close()
+            finally:
+                cap.release()
 
     def read(self):
         try:
@@ -234,12 +217,6 @@ class PreviewEncoder:
             except queue.Empty:
                 continue
             try:
-                if frame.shape[1] > 1920:
-                    frame = cv2.resize(
-                        frame,
-                        (1920, round(frame.shape[0] * 1920 / frame.shape[1])),
-                        interpolation=cv2.INTER_AREA,
-                    )
                 ok, encoded = cv2.imencode(
                     ".jpg",
                     cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
@@ -445,6 +422,8 @@ class Engine:
             }
 
     def update(self, patch):
+        if "camera_controls" in patch:
+            raise ValueError("Use the camera-controls API to adjust the webcam.")
         with self.lock:
             new = Settings.model_validate({**self.settings.model_dump(), **patch})
             if self.thread and self.thread.is_alive():
@@ -464,12 +443,88 @@ class Engine:
                 raise ValueError("Input and output cameras must be different devices.")
             if new.effect == "image" and self.background is None:
                 raise ValueError("Upload a background image first.")
-            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.settings_path.with_suffix(".tmp")
-            temp.write_text(new.model_dump_json(indent=2))
-            temp.replace(self.settings_path)
+            self._save_settings(new)
             self.settings = new
         return self.status()
+
+    def _save_settings(self, settings):
+        self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.settings_path.with_suffix(".tmp")
+        temporary.write_text(settings.model_dump_json(indent=2))
+        temporary.replace(self.settings_path)
+
+    def camera_control_info(self):
+        with self.lock:
+            device = self.settings.camera
+            if (
+                self.capture
+                and self.capture.controls
+                and self.capture.thread.is_alive()
+            ):
+                return {"device": device, "controls": self.capture.controls.read()}
+            if not any(d["path"] == device and not d["virtual"] for d in devices()):
+                raise ValueError("Select an available physical camera.")
+            controls = CameraControls(device)
+            try:
+                return {"device": device, "controls": controls.read()}
+            finally:
+                controls.close()
+
+    def update_camera_controls(self, values, exposure=None):
+        with self.lock:
+            if (
+                self.state["phase"] != "running"
+                or not self.capture
+                or not self.capture.controls
+            ):
+                raise ValueError("Start the camera to adjust its controls.")
+            controls = self.capture.controls
+            available = controls.read()
+            mode = exposure or self.settings.exposure
+            if "auto_exposure" in values or any(k not in CONTROLS for k in values):
+                raise ValueError("Unsupported camera control.")
+            for key in values:
+                if key not in available:
+                    raise ValueError(f"This camera does not support {key}.")
+                if key == "exposure_time_absolute" and mode != "manual":
+                    raise ValueError(
+                        "Select Manual exposure before adjusting the shutter."
+                    )
+                # Manual sliders are only writable when their Auto mode is off.
+                dependencies = {
+                    "white_balance_temperature": "white_balance_automatic",
+                    "focus_absolute": "focus_automatic_continuous",
+                }
+                auto = dependencies.get(key)
+                if auto and values.get(auto, available.get(auto, {}).get("value", 0)):
+                    raise ValueError(f"Turn off {available[auto]['label']} first.")
+                unlocking = (key == "exposure_time_absolute" and mode == "manual") or (
+                    auto and values.get(auto) == 0
+                )
+                if available[key]["readonly"] or (
+                    available[key]["inactive"] and not unlocking
+                ):
+                    raise ValueError(
+                        f"{available[key]['label']} is unavailable in the current camera mode."
+                    )
+            profiles = {k: dict(v) for k, v in self.settings.camera_controls.items()}
+            profile = profiles.setdefault(self.settings.camera, {})
+            profile.update(values)
+            new = self.settings.model_copy(
+                update={"camera_controls": profiles, "exposure": mode}
+            )
+            applied = dict(profile)
+            if mode != "manual":
+                applied.pop("exposure_time_absolute", None)
+            result = controls.apply(
+                applied,
+                exposure=mode if exposure else None,
+                fps=new.fps,
+                persist=lambda: self._save_settings(new),
+            )
+            self.settings = new
+            self.capture.warning = None
+            return {"device": new.camera, "controls": result, "state": self.status()}
 
     def start(self):
         with self.lock:

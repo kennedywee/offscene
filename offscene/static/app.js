@@ -75,7 +75,9 @@ function render(next, sync = false) {
     .querySelectorAll("[data-capture]")
     .forEach((el) => (el.disabled = active));
   $("refresh").disabled = active;
-  if (active) dropdowns.forEach((dropdown) => dropdown.close());
+  if (active) dropdowns.forEach((dropdown) => {
+    if (dropdown.trigger.disabled) dropdown.close();
+  });
   $("fps").textContent = running ? next.fps.toFixed(1) : "—";
   $("capture-fps").textContent = running ? next.capture_fps.toFixed(1) : "—";
   $("latency").textContent = running ? next.processing_ms.toFixed(1) : "—";
@@ -90,6 +92,7 @@ function render(next, sync = false) {
     ? `${next.resolution} · ${next.settings.fps} fps requested`
     : "Preview";
   if (next.gpu) $("gpu").textContent = next.gpu;
+  syncCameraControls(next);
   $("error").textContent = next.error || uiError || "";
   $("error").hidden = !next.error && !uiError;
   $("warning").textContent = next.warning || "";
@@ -112,7 +115,7 @@ function render(next, sync = false) {
   if (!running) {
     hideFrame();
     $("preview-status").textContent =
-      "Live preview streams up to 1080p. Virtual output uses the full selected resolution.";
+      "Preview uses the full selected output resolution. Mirror preview changes only your view.";
   } else connectPreview();
   if (sync) {
     const s = next.settings;
@@ -182,12 +185,14 @@ function patch(values) {
 }
 
 function selectPanel(name) {
+  dropdowns.forEach((dropdown) => dropdown.close());
   document.querySelectorAll("[data-panel]").forEach((tab) => {
     const selected = tab.dataset.panel === name;
     tab.setAttribute("aria-selected", selected);
     tab.tabIndex = selected ? 0 : -1;
     $(`${tab.dataset.panel}-panel`).hidden = !selected;
   });
+  document.querySelector(".controls").scrollTop = 0;
 }
 
 const panelTabs = [...document.querySelectorAll("[data-panel]")];
@@ -201,7 +206,10 @@ panelTabs.forEach((tab, index) => {
         ? panelTabs[0]
         : event.key === "End"
           ? panelTabs.at(-1)
-          : panelTabs[(index + 1) % panelTabs.length];
+          : panelTabs[
+              (index + (event.key === "ArrowLeft" ? -1 : 1) + panelTabs.length) %
+                panelTabs.length
+            ];
     selectPanel(next.dataset.panel);
     next.focus();
   });
@@ -251,7 +259,6 @@ for (const [id, key] of Object.entries({
   camera: "camera",
   "fps-select": "fps",
   model: "model",
-  exposure: "exposure",
   color: "color",
   "output-device": "output_device",
 })) {
@@ -301,7 +308,7 @@ $("virtual-camera").addEventListener("change", (event) =>
 $("mirror").addEventListener("change", () =>
   $("preview-image").classList.toggle("mirrored", $("mirror").checked),
 );
-$("preview-image").classList.add("mirrored");
+
 $("background-file").addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;

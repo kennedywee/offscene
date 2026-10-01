@@ -5,7 +5,7 @@ import asyncio
 import io
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import cv2
 import numpy as np
@@ -22,7 +22,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .engine import Engine, devices
@@ -76,6 +76,28 @@ def status():
 @app.get("/api/devices")
 def cameras():
     return devices()
+
+
+class CameraControlPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict[str, StrictInt] = Field(default_factory=dict)
+    exposure: Literal["auto", "motion", "manual", "preserve"] | None = None
+
+
+@app.get("/api/camera-controls")
+def camera_controls():
+    try:
+        return engine.camera_control_info()
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.patch("/api/camera-controls")
+def camera_control_update(patch: CameraControlPatch):
+    try:
+        return engine.update_camera_controls(patch.values, patch.exposure)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.patch("/api/settings")
