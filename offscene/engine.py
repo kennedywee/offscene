@@ -203,23 +203,23 @@ class PreviewEncoder:
         )
         self.thread.start()
 
-    def submit(self, frame):
+    def submit(self, frame, *, bgr=False):
         try:
             self.frames.get_nowait()
         except queue.Empty:
             pass
-        self.frames.put_nowait(frame)
+        self.frames.put_nowait((frame, bgr))
 
     def _run(self):
         while not self.stop_event.is_set():
             try:
-                frame = self.frames.get(timeout=0.2)
+                frame, bgr = self.frames.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
                 ok, encoded = cv2.imencode(
                     ".jpg",
-                    cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+                    frame if bgr else cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
                     [cv2.IMWRITE_JPEG_QUALITY, 90],
                 )
                 if ok and not self.stop_event.is_set():
@@ -353,8 +353,6 @@ class Matting:
                 .cpu()
                 .numpy()
             )
-        elif settings.preview == "original":
-            preview = rgb.copy()
         else:
             preview = output
         return output, preview
@@ -636,7 +634,12 @@ class Engine:
                                 warning=f"Virtual camera disconnected: {exc}",
                             )
                 now = time.perf_counter()
-                encoder.submit(preview)
+                if settings.preview == "original":
+                    # Capture owns this BGR array; encoding it directly avoids
+                    # copying the upload buffer and converting RGB back to BGR.
+                    encoder.submit(frame, bgr=True)
+                else:
+                    encoder.submit(preview)
                 count += 1
                 with self.lock:
                     self.state.update(

@@ -193,7 +193,15 @@ def main():
     print(
         f"Open http://127.0.0.1:{args.port}. Camera stays off until you press Start camera."
     )
-    uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False)
+    # JPEG frames are already compressed. Deflating them again blocks the event
+    # loop, especially for detailed full-resolution Original previews.
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=args.port,
+        access_log=False,
+        ws_per_message_deflate=False,
+    )
 
 
 if __name__ == "__main__":

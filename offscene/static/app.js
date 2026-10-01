@@ -354,7 +354,11 @@ function connectPreview() {
   previewSocket = socket;
   previewFrames = 0;
   previewPeriod = performance.now();
-  socket.onmessage = async (event) => {
+  const decodeFrame = async (event) => {
+    if (previewSocket !== socket || state?.phase !== "running") return;
+    // Fetch the next frame while this one decodes. Acknowledge only when a
+    // decode starts, bounding the queue to one decoding frame and one waiting.
+    if (socket.readyState === WebSocket.OPEN) socket.send("next");
     const url = URL.createObjectURL(event.data);
     try {
       const decoded = new Image();
@@ -383,14 +387,14 @@ function connectPreview() {
       }
       $("preview-status").textContent =
         `Live preview: ${decoded.naturalWidth} × ${decoded.naturalHeight}. Virtual output: ${state.resolution}.`;
-      // Acknowledge after the next paint opportunity, preventing a frame backlog.
-      requestAnimationFrame(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send("next");
-      });
     } catch {
       URL.revokeObjectURL(url);
       socket.close();
     }
+  };
+  let decoding = Promise.resolve();
+  socket.onmessage = (event) => {
+    decoding = decoding.then(() => decodeFrame(event));
   };
   socket.onclose = () => {
     if (previewSocket === socket) {
