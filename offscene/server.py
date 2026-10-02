@@ -2,13 +2,10 @@
 
 import argparse
 import asyncio
-import io
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
 
-import cv2
-import numpy as np
 import uvicorn
 from fastapi import (
     FastAPI,
@@ -21,12 +18,12 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .camera_presets import PRESETS
 from .engine import Engine, devices
+from .scenes import UPLOAD_LIMIT, SceneConflict, decode_image
 
 engine = Engine()
 STATIC = Path(__file__).parent / "static"
@@ -186,24 +183,64 @@ async def preview(socket: WebSocket):
 
 @app.post("/api/background")
 async def background(file: Annotated[UploadFile, File()]):
-    data = await file.read(12 * 1024 * 1024 + 1)
+    data = await file.read(UPLOAD_LIMIT + 1)
     await file.close()
-    if len(data) > 12 * 1024 * 1024:
+    if len(data) > UPLOAD_LIMIT:
         raise HTTPException(413, "Choose an image smaller than 12 MB.")
-    # Inspect dimensions before full decoding to bound decompression memory.
     try:
-        with Image.open(io.BytesIO(data)) as source:
-            if source.width * source.height > 24_000_000:
-                raise HTTPException(422, "Choose an image with at most 24 megapixels.")
-            source.load()
-            source.thumbnail((3840, 2160))
-            decoded = cv2.cvtColor(np.asarray(source.convert("RGB")), cv2.COLOR_RGB2BGR)
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
-        raise HTTPException(422, "Choose a valid JPEG, PNG, or WebP image.") from exc
-    with engine.lock:
-        engine.background = decoded
-        engine.background_version += 1
-    return engine.update({"effect": "image"})
+        decoded = await asyncio.to_thread(decode_image, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        return await asyncio.to_thread(engine.set_background, decoded)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+class SceneName(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+
+
+def scene_action(action, *args):
+    try:
+        return action(*args)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except SceneConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/scenes")
+def scenes():
+    return engine.status()["scenes"]
+
+
+@app.post("/api/scenes")
+def scene_create(body: SceneName):
+    return scene_action(engine.save_scene, body.name)
+
+
+@app.put("/api/scenes/{scene_id}")
+def scene_update(scene_id: str):
+    return scene_action(engine.save_scene, None, scene_id)
+
+
+@app.patch("/api/scenes/{scene_id}")
+def scene_rename(scene_id: str, body: SceneName):
+    return scene_action(engine.rename_scene, scene_id, body.name)
+
+
+@app.delete("/api/scenes/{scene_id}")
+def scene_delete(scene_id: str):
+    return scene_action(engine.delete_scene, scene_id)
+
+
+@app.post("/api/scenes/{scene_id}/apply")
+def scene_apply(scene_id: str):
+    return scene_action(engine.apply_scene, scene_id)
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

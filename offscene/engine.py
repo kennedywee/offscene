@@ -4,19 +4,29 @@ import hashlib
 import logging
 import os
 import queue
+import secrets
 import threading
 import time
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 import cv2
 import torch
 import torch.nn.functional as F
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    ValidationError,
+    model_validator,
+)
 
 from .camera_controls import CONTROLS, CameraControls
 from .camera_presets import preset_values
+from .scenes import FIELDS, SceneConflict, SceneStore, clean_name, scene_settings
 
 log = logging.getLogger(__name__)
 CACHE = Path(
@@ -398,9 +408,6 @@ class Engine:
                 )
             except (ValueError, OSError):
                 log.warning("Ignoring unreadable saved settings")
-        # Uploaded images live only in memory; never silently start a camera.
-        if self.settings.effect == "image":
-            self.settings.effect = "blur"
         self.thread = None
         self.capture = None
         self.camera_preset_undo = None
@@ -409,9 +416,12 @@ class Engine:
         self.jpeg_sequence = 0
         self.background = None
         self.background_version = 0
+        # Scene mutations hold scene_lock first, then the engine lock briefly.
+        self.scene_lock = threading.Lock()
+        self.scenes = SceneStore(CACHE)
         self.state = {
             "phase": "stopped",
-            "error": None,
+            "error": self._restore_scene_background(),
             "warning": None,
             "fps": 0,
             "capture_fps": 0,
@@ -440,13 +450,324 @@ class Engine:
             return self.jpeg_sequence, self.jpeg
 
     def status(self):
+        # Pick up repaired scene metadata without blocking on a mutation.
+        if self.scenes.error and self.scene_lock.acquire(blocking=False):
+            try:
+                self.scenes.load()
+            finally:
+                self.scene_lock.release()
         with self.lock:
             return {
                 **self.state,
                 "settings": self.settings.model_dump(),
                 "has_background": self.background is not None,
                 "can_undo_camera_preset": self.camera_preset_undo is not None,
+                "scenes": self._scene_status(),
             }
+
+    def _restore_scene_background(self):
+        """Restore the last applied scene's image only if it is still current.
+
+        Uploaded images live only in memory. Never start a camera here.
+        """
+        current = self.settings
+        applied = self.scenes.applied
+        # Only an interrupted apply leaves "previous" on disk: the new scene is
+        # recorded while settings.json still holds the previous scene's settings.
+        if (
+            applied
+            and applied.get("previous")
+            and not self._scene_matches(self.scenes.get(applied["id"]), current)
+            and self._scene_matches(
+                self.scenes.get(applied["previous"]["id"]), current
+            )
+        ):
+            applied = self.scenes.applied = applied["previous"]
+        if current.effect != "image":
+            return None
+        self.settings = current.model_copy(update={"effect": "blur"})
+        if not applied or applied["background_changed"]:
+            return None
+        scene = self.scenes.get(applied["id"])
+        if not scene["background"] or not self._scene_matches(scene, current):
+            return None
+        try:
+            self.background = self.scenes.read_asset(scene["id"], scene["background"])
+        except (OSError, ValueError):
+            log.exception("Could not restore scene background")
+            # Do not present the image scene as active after falling back.
+            self.scenes.applied = None
+            return (
+                f"The background image for scene “{scene['name']}” is missing or "
+                "unreadable, so Offscene started with Blur. Choose an image, then "
+                "use Update scene to save it again."
+            )
+        self.settings = current
+        self.background_version += 1
+        return None
+
+    def _scene_target(self, scene, base):
+        """Validate a scene as complete Settings, keeping excluded preferences."""
+        values = dict(scene["settings"])
+        name = scene["name"]
+        if set(values) != {*FIELDS, "camera_profile"}:
+            raise ValueError(f"Scene “{name}” has missing or unknown settings.")
+        profile = values.pop("camera_profile")
+        if not isinstance(profile, dict) or any(k not in CONTROLS for k in profile):
+            raise ValueError(f"Scene “{name}” has invalid camera controls.")
+        try:
+            new = Settings.model_validate(
+                {**base.model_dump(), **values, "camera_controls": {}}
+            )
+            # Replace only this camera's profile; others stay as configured.
+            profiles = {k: dict(v) for k, v in base.camera_controls.items()}
+            profiles[new.camera] = profile
+            return Settings.model_validate(
+                {**new.model_dump(), "camera_controls": profiles}
+            )
+        except ValidationError as exc:
+            error = exc.errors()[0]
+            field = ".".join(str(part) for part in error["loc"]) or "settings"
+            raise ValueError(
+                f"Scene “{name}” has an invalid {field}: {error['msg']}."
+            ) from None
+
+    def _scene_matches(self, scene, settings):
+        try:
+            target = self._scene_target(scene, settings)
+        except ValueError:
+            return False
+        return scene_settings(target) == scene_settings(settings)
+
+    def _scene_status(self):
+        applied = self.scenes.applied
+        modified = False
+        if applied:
+            modified = applied["background_changed"] or not self._scene_matches(
+                self.scenes.get(applied["id"]), self.settings
+            )
+        return {
+            "items": [
+                {
+                    "id": scene["id"],
+                    "name": scene["name"],
+                    "settings": {
+                        k: v
+                        for k, v in scene["settings"].items()
+                        if k != "camera_profile"
+                    },
+                    "has_background": scene["background"] is not None,
+                }
+                for scene in self.scenes.scenes
+            ],
+            "applied": applied["id"] if applied else None,
+            "modified": modified,
+            "error": self.scenes.error,
+        }
+
+    def _camera_active(self):
+        return bool(
+            (self.thread and self.thread.is_alive())
+            or (self.capture and self.capture.thread.is_alive())
+        )
+
+    def save_scene(self, name=None, scene_id=None):
+        """Save the current setup as a new scene, or replace scene_id's setup."""
+        with self.scene_lock:
+            with self.lock:
+                store = self.scenes.require()
+                previous = store.get(scene_id) if scene_id else None
+                if not previous:
+                    name = clean_name(name, store.scenes)
+                settings = self.settings.model_copy(deep=True)
+                background = self.background
+            # Encode outside the engine lock so saving never stalls live output.
+            new_id = scene_id or secrets.token_hex(8)
+            asset = None
+            if settings.effect == "image":
+                if background is None:
+                    raise ValueError("Choose a background image before saving.")
+                try:
+                    asset = store.write_asset(new_id, background)
+                except OSError as exc:
+                    raise ValueError(
+                        f"Could not save the scene background: {exc.strerror or exc}."
+                    ) from exc
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            record = {
+                "id": new_id,
+                "name": previous["name"] if previous else name,
+                "created_at": previous.get("created_at", now) if previous else now,
+                "updated_at": now,
+                "settings": scene_settings(settings),
+                "background": asset,
+            }
+            try:
+                with self.lock:
+                    scenes = (
+                        [record if s["id"] == scene_id else s for s in store.scenes]
+                        if previous
+                        else [*store.scenes, record]
+                    )
+                    # The current setup now matches this scene unless the image
+                    # changed while it was being written.
+                    changed = asset is not None and self.background is not background
+                    store.commit(scenes, {"id": new_id, "background_changed": changed})
+            except OSError as exc:
+                store.remove_asset(new_id, asset)
+                raise ValueError(
+                    f"Could not save scenes: {exc.strerror or exc}. The previous "
+                    "scenes are unchanged."
+                ) from exc
+            if previous and previous["background"] != asset:
+                store.remove_asset(new_id, previous["background"])
+        return self.status()
+
+    def rename_scene(self, scene_id, name):
+        with self.scene_lock, self.lock:
+            store = self.scenes.require()
+            scene = store.get(scene_id)
+            name = clean_name(name, store.scenes, exclude=scene_id)
+            try:
+                store.commit(
+                    [{**s, "name": name} if s is scene else s for s in store.scenes],
+                    store.applied,
+                )
+            except OSError as exc:
+                raise ValueError(
+                    f"Could not rename the scene: {exc.strerror or exc}."
+                ) from exc
+        return self.status()
+
+    def delete_scene(self, scene_id):
+        """Remove a scene and its image. Current settings stay unchanged."""
+        with self.scene_lock, self.lock:
+            store = self.scenes.require()
+            scene = store.get(scene_id)
+            applied = store.applied
+            if applied and applied["id"] == scene_id:
+                applied = None
+            elif applied and (applied.get("previous") or {}).get("id") == scene_id:
+                applied = {**applied, "previous": None}
+            try:
+                store.commit([s for s in store.scenes if s is not scene], applied)
+            except OSError as exc:
+                raise ValueError(
+                    f"Could not delete the scene: {exc.strerror or exc}."
+                ) from exc
+            store.remove_asset(scene_id, scene["background"])
+        return self.status()
+
+    def apply_scene(self, scene_id):
+        """Validate everything, then commit settings. Never starts the camera."""
+        with self.scene_lock, self.lock:
+            store = self.scenes.require()
+            scene = store.get(scene_id)
+            if self._camera_active():
+                raise SceneConflict("Stop the camera to apply a scene.")
+            new = self._scene_target(scene, self.settings)
+            if new.camera == new.output_device:
+                raise ValueError(
+                    f"Scene “{scene['name']}” uses the virtual-camera output device "
+                    "as its camera. Change the output device first."
+                )
+            if not any(d["path"] == new.camera and not d["virtual"] for d in devices()):
+                raise SceneConflict(
+                    "Scene camera is unavailable. Connect it and refresh cameras."
+                )
+            background = None
+            if new.effect == "image":
+                try:
+                    if not scene["background"]:
+                        raise ValueError("no image recorded")
+                    background = store.read_asset(scene_id, scene["background"])
+                except (OSError, ValueError) as exc:
+                    raise ValueError(
+                        f"The background image for scene “{scene['name']}” is "
+                        "missing or unreadable. Current settings are unchanged."
+                    ) from exc
+            # Commit the scene marker first and settings last. Until the apply
+            # completes, the marker keeps the previous scene so a restart after
+            # an interruption or failed rollback can restore the previous scene.
+            applied = store.applied
+            previous = (
+                {"id": applied["id"], "background_changed": applied["background_changed"]}
+                if applied
+                else None
+            )
+            try:
+                store.commit(
+                    store.scenes,
+                    {"id": scene_id, "background_changed": False, "previous": previous},
+                )
+            except OSError as exc:
+                raise ValueError(
+                    f"Could not save scenes: {exc.strerror or exc}. Current "
+                    "settings are unchanged."
+                ) from exc
+            try:
+                self._save_settings(new)
+            except OSError as exc:
+                try:
+                    store.commit(store.scenes, applied)
+                except OSError:
+                    log.exception("Could not restore the applied scene marker")
+                    store.applied = applied
+                raise ValueError(
+                    f"Could not save settings: {exc.strerror or exc}. Current "
+                    "settings are unchanged."
+                ) from exc
+            # The apply completed; drop the recovery reference so later edits
+            # that happen to match the previous scene are not mistaken for an
+            # interrupted apply. The next marker write persists this if needed.
+            completed = {"id": scene_id, "background_changed": False}
+            try:
+                store.commit(store.scenes, completed)
+            except OSError:
+                log.exception("Could not finalize the applied scene marker")
+                store.applied = completed
+            self.settings = new
+            if background is not None:
+                self.background = background
+                self.background_version += 1
+            self.camera_preset_undo = None
+            if self.state["phase"] != "error":
+                # A startup background error no longer describes these settings.
+                self.state["error"] = None
+        return self.status()
+
+    def set_background(self, image):
+        """Use an uploaded image and select Image, or change nothing on failure."""
+        with self.scene_lock, self.lock:
+            previous = self.background, self.background_version
+            self.background = image
+            self.background_version += 1
+            try:
+                result = self.update({"effect": "image"})
+            except OSError as exc:
+                self.background, self.background_version = previous
+                raise ValueError(
+                    f"Could not save settings: {exc.strerror or exc}. The previous "
+                    "background is unchanged."
+                ) from exc
+            except Exception:
+                self.background, self.background_version = previous
+                raise
+            # The new image differs from any applied image scene's image.
+            store, applied = self.scenes, self.scenes.applied
+            if (
+                applied
+                and not applied["background_changed"]
+                and store.get(applied["id"])["settings"].get("effect") == "image"
+            ):
+                changed = {"id": applied["id"], "background_changed": True}
+                try:
+                    store.commit(store.scenes, changed)
+                except OSError:
+                    log.exception("Could not record the background change")
+                    store.applied = changed
+                result = self.status()
+            return result
 
     def update(self, patch):
         if "camera_controls" in patch or "camera_preset" in patch:

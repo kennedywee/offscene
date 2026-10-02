@@ -20,6 +20,7 @@
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/dropdown.js" defer></script>
     <script src="/static/camera-controls.js" defer></script>
+    <script src="/static/scenes.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body>
@@ -38,6 +39,82 @@
     </header>
     <main class="workspace">
       <section class="monitor" aria-label="Camera preview">
+        <div class="scene-bar" role="group" aria-label="Scenes">
+          <div class="scene-field">
+            <label class="sr-only" id="scene-field-label" for="scene"
+              >Scene</label
+            ><button
+              id="scene"
+              class="dropdown-trigger"
+              type="button"
+              role="combobox"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="scene-options"
+              aria-describedby="scene-summary"
+            >
+              <span class="dropdown-value">No saved scenes</span
+              ><svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="m4 6 4 4 4-4" />
+              </svg>
+            </button>
+            <div
+              id="scene-options"
+              class="dropdown-menu"
+              role="listbox"
+              aria-labelledby="scene-field-label"
+              popover="auto"
+            >
+              <div role="option" data-value="" aria-selected="true">
+                No saved scenes
+              </div>
+            </div>
+          </div>
+          <div class="scene-actions">
+            <button id="scene-apply" type="button" aria-describedby="scene-hint" disabled>
+              Apply scene</button
+            ><button id="scene-save" type="button">Save scene</button
+            ><button
+              id="scene-more"
+              class="icon-button"
+              type="button"
+              aria-label="More scene actions"
+              title="More scene actions"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="scene-menu"
+              popovertarget="scene-menu"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h.01M12 12h.01M19 12h.01" />
+              </svg>
+            </button>
+            <div
+              id="scene-menu"
+              class="dropdown-menu scene-menu"
+              role="menu"
+              aria-label="Scene actions"
+              popover="auto"
+            >
+              <button type="button" role="menuitem" tabindex="-1" data-scene-action="update">
+                Update scene
+              </button>
+              <button type="button" role="menuitem" tabindex="-1" data-scene-action="rename">
+                Rename
+              </button>
+              <button type="button" role="menuitem" tabindex="-1" data-scene-action="delete">
+                Delete
+              </button>
+            </div>
+          </div>
+          <p class="scene-meta">
+            <span id="scene-state"></span><span id="scene-summary"></span
+            ><span id="scene-hint" hidden>Stop the camera to apply a scene.</span
+            ><span id="scene-status" role="status"></span>
+          </p>
+          <p id="scene-error" class="scene-error" role="alert" hidden></p>
+        </div>
         <div class="source-bar">
           <div class="source-fields">
             <div class="camera-field">
@@ -495,6 +572,11 @@
         <p>Changes save automatically. Stopping restores the previous device settings. Stop to change the source, resolution, frame rate, or model.</p>
         <dl id="camera-look-help"></dl>
       </section>
+      <section class="help-section" aria-labelledby="scene-help-title">
+        <h3 id="scene-help-title">Scenes</h3>
+        <p>A scene saves the camera, resolution, requested frame rate, camera adjustments, background, and processing. Preview, mirroring, and virtual-camera output are not included.</p>
+        <p>Selecting a scene only shows its summary. Stop the camera, then choose Apply scene; start the camera when you are ready. Modified means current settings differ from the applied scene; use Update scene to save them.</p>
+      </section>
       <section class="help-section" aria-labelledby="installation-title">
         <h3 id="installation-title">First-time Linux setup</h3>
         <p>
@@ -512,5 +594,41 @@
         </p>
       </section>
     </section>
+    <dialog id="scene-name-dialog" class="scene-dialog" aria-labelledby="scene-name-title">
+      <form id="scene-name-form" novalidate>
+        <h2 id="scene-name-title">Save scene</h2>
+        <label for="scene-name">Name</label>
+        <input
+          id="scene-name"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          aria-describedby="scene-name-error"
+          required
+        />
+        <p id="scene-name-error" class="field-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" data-dialog-cancel>Cancel</button
+          ><button type="submit" id="scene-name-submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="scene-confirm-dialog"
+      class="scene-dialog"
+      role="alertdialog"
+      aria-labelledby="scene-confirm-title"
+      aria-describedby="scene-confirm-copy"
+    >
+      <form id="scene-confirm-form" novalidate>
+        <h2 id="scene-confirm-title"></h2>
+        <p id="scene-confirm-copy"></p>
+        <p id="scene-confirm-error" class="field-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" data-dialog-cancel>Cancel</button
+          ><button type="submit" id="scene-confirm-submit"></button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

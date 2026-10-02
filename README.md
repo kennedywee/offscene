@@ -93,7 +93,37 @@ Preset recipes live in `offscene/camera_presets.py`. Applying a recipe uses the 
 
 On the RTX 3060 Ti, a repeated 1080p frame measured about 11 ms with ResNet50 / Balanced and 17.5 ms with ResNet50 / Detail before adding edge trimming. These are processing benchmarks, not webcam frame rates. The original EMEET Piko manual setting of 97.4 ms limited capture to approximately 10.3 fps; changing application language cannot overcome that sensor limit. The larger model offers a modest quality improvement, not guaranteed Broadcast parity.
 
+## Saved scenes
+
+A scene stores a named camera setup: the physical camera device, resolution, requested frame rate, exposure mode, digital zoom, Look label, that camera’s saved control profile, matting model, analysis quality, background suppression, edge trim, background effect, blur amount, solid color, and a copy of the current image when **Image** is selected. Scenes do not include whether the camera is running, virtual-camera enablement or output device, preview mode, preview mirroring, or Look **Undo** history; applying a scene keeps those as they are. Automatic exposure, white balance, and focus are saved as configured modes, not as momentary camera readings.
+
+Use the scene controls above the source selectors:
+
+- **Save scene** stores the current setup under a new name. Names are trimmed, 1–60 characters, and unique ignoring case. Saving works while the camera is running and does not interrupt output.
+- Selecting a scene only shows its summary: camera, resolution, requested fps, background, and model. The frame rate is the requested rate, not a measurement.
+- **Apply scene** requires the camera to be stopped and never starts it. Offscene first validates the scene’s settings, that its camera is connected, and its background image; any failure leaves the current settings and background unchanged. Camera controls are written to the hardware through the normal validated path when you press **Start camera**. A scene never substitutes another camera: connect the saved one and refresh cameras.
+- The applied scene’s name stays visible. **Modified** appears when included settings change, including a new background image; preview and output preferences do not count. Changes never overwrite a scene automatically.
+- The **⋯** menu offers **Update scene** (replace the selected scene with the current setup, after confirmation), **Rename**, and **Delete** (after confirmation). Deleting a scene does not change the current setup.
+
+Scenes live beside the settings in the cache directory (`.cache/`, or `OFFSCENE_CACHE`):
+
+```text
+.cache/
+├── settings.json
+├── scenes.json                 # versioned scene metadata and the last applied scene
+├── scenes/
+│   └── <scene-id>/
+│       └── background-<revision>.png
+└── models/
+```
+
+Scene IDs are generated; names are never used as paths. Metadata is written to a temporary file and atomically replaced. A new background image is written and decoded back before the metadata refers to it, and the replaced or deleted image is removed only after the metadata is saved, so a failed save or update leaves the previous scene usable. Each update writes a new `background-<revision>.png` for that reason. Stored images are lossless PNG copies of the uploaded image after the existing 12 MB, 24-megapixel, and 3840 × 2160 decoding limits.
+
+After a restart, Offscene restores the last applied scene’s image when the saved settings still match that scene, and leaves the camera off. If that image is missing or unreadable, Offscene starts with Blur, reports which scene is affected, and does not show the scene as applied; use **Update scene** with a new image to repair it. If `scenes.json` itself is unreadable, Offscene reports the path, does not overwrite the file, and disables scene actions until it is repaired or moved; camera and background controls keep working.
+
 ## Verified on this machine
+
+Saved scenes were checked on 2026-10-02 with the EMEET Piko / RTX 3060 Ti against a separate cache directory. Blur, solid-color, and image scenes were saved and applied while stopped, then started; processed 2560 × 1440 and 1280 × 720 frames matched each scene’s background, and a saved Cinematic look reached the hardware on start. Scenes and an image survived a server restart with the camera off. Saving while running continued output; applying while running was rejected in the UI and API. Modified, Update, Look Undo, naming limits (empty, duplicate, 60/61 characters), HTML-like names rendered as text, rename, cancel, and delete were exercised. A missing camera, a missing or corrupt image (including at startup), invalid scene settings, unreadable metadata, and simulated metadata/settings write failures each left the previous settings, scenes, and files unchanged. Keyboard selection, menu navigation, dialog focus trapping, Escape, and focus restoration were checked at 1920 × 1080 and 375 × 812 without horizontal overflow. The v4l2loopback module was not loaded during this check, so virtual-camera delivery of applied scenes was not re-verified.
 
 Camera reset was verified from Manual and Auto exposure on 2026-10-01: all 16 supported controls matched their reported defaults, saved defaults survived a server restart, and a simulated save failure restored every previous hardware value. The digital zoom slider was exercised in the browser; live 4K feature matching measured 1.501× and 2.000× in Original preview, with corresponding zoom in the virtual output and aligned preview/output framing at 2×. Reset returned digital zoom to 1×.
 
@@ -133,7 +163,7 @@ A subsequent 1080p/60 investigation isolated two capture bottlenecks: the retain
 
 The server binds only to `127.0.0.1`; no video is uploaded to a cloud service. The UI has no external fonts, scripts, or analytics. HTTP API reads and camera controls require a custom request header, and preview WebSockets require an exact matching Origin. No cross-origin permissions are granted. This protects against drive-by websites, not other processes running as your user. Do not expose the server through a public proxy.
 
-Settings and model files live in `.cache/` (override with `OFFSCENE_CACHE`). Uploaded backgrounds live in memory, so upload them again after a server restart. Settings persist; camera activation does not. Background uploads are limited to 12 MB and 24 megapixels.
+Settings, saved scenes, scene background images, and model files live in `.cache/` (override with `OFFSCENE_CACHE`); see [Saved scenes](#saved-scenes). Uploaded backgrounds otherwise live in memory: after a server restart, only an image saved in the last applied, unmodified scene is restored. Settings persist; camera activation does not. Background uploads are limited to 12 MB and 24 megapixels.
 
 ## Troubleshooting
 
