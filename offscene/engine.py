@@ -472,8 +472,8 @@ class Engine:
         """
         current = self.settings
         applied = self.scenes.applied
-        # An apply interrupted between its two writes records the new scene
-        # while settings.json still holds the previous scene's settings.
+        # Only an interrupted apply leaves "previous" on disk: the new scene is
+        # recorded while settings.json still holds the previous scene's settings.
         if (
             applied
             and applied.get("previous")
@@ -686,9 +686,9 @@ class Engine:
                         f"The background image for scene “{scene['name']}” is "
                         "missing or unreadable. Current settings are unchanged."
                     ) from exc
-            # Commit the scene marker first and settings last. The marker keeps
-            # the previous scene so a restart after an interrupted apply, or a
-            # failed rollback, can still match and restore the previous scene.
+            # Commit the scene marker first and settings last. Until the apply
+            # completes, the marker keeps the previous scene so a restart after
+            # an interruption or failed rollback can restore the previous scene.
             applied = store.applied
             previous = (
                 {"id": applied["id"], "background_changed": applied["background_changed"]}
@@ -717,6 +717,15 @@ class Engine:
                     f"Could not save settings: {exc.strerror or exc}. Current "
                     "settings are unchanged."
                 ) from exc
+            # The apply completed; drop the recovery reference so later edits
+            # that happen to match the previous scene are not mistaken for an
+            # interrupted apply. The next marker write persists this if needed.
+            completed = {"id": scene_id, "background_changed": False}
+            try:
+                store.commit(store.scenes, completed)
+            except OSError:
+                log.exception("Could not finalize the applied scene marker")
+                store.applied = completed
             self.settings = new
             if background is not None:
                 self.background = background
