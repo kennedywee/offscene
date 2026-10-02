@@ -470,12 +470,22 @@ class Engine:
 
         Uploaded images live only in memory. Never start a camera here.
         """
-        if self.settings.effect != "image":
-            return None
-        current, self.settings = self.settings, self.settings.model_copy(
-            update={"effect": "blur"}
-        )
+        current = self.settings
         applied = self.scenes.applied
+        # An apply interrupted between its two writes records the new scene
+        # while settings.json still holds the previous scene's settings.
+        if (
+            applied
+            and applied.get("previous")
+            and not self._scene_matches(self.scenes.get(applied["id"]), current)
+            and self._scene_matches(
+                self.scenes.get(applied["previous"]["id"]), current
+            )
+        ):
+            applied = self.scenes.applied = applied["previous"]
+        if current.effect != "image":
+            return None
+        self.settings = current.model_copy(update={"effect": "blur"})
         if not applied or applied["background_changed"]:
             return None
         scene = self.scenes.get(applied["id"])
@@ -635,11 +645,12 @@ class Engine:
             store = self.scenes.require()
             scene = store.get(scene_id)
             applied = store.applied
+            if applied and applied["id"] == scene_id:
+                applied = None
+            elif applied and (applied.get("previous") or {}).get("id") == scene_id:
+                applied = {**applied, "previous": None}
             try:
-                store.commit(
-                    [s for s in store.scenes if s is not scene],
-                    None if applied and applied["id"] == scene_id else applied,
-                )
+                store.commit([s for s in store.scenes if s is not scene], applied)
             except OSError as exc:
                 raise ValueError(
                     f"Could not delete the scene: {exc.strerror or exc}."
@@ -675,12 +686,20 @@ class Engine:
                         f"The background image for scene “{scene['name']}” is "
                         "missing or unreadable. Current settings are unchanged."
                     ) from exc
-            # Commit the scene marker first and settings last. If settings fail
-            # and the marker rollback also fails, the disk keeps the previous
-            # settings; the stale marker only shows that scene as Modified.
+            # Commit the scene marker first and settings last. The marker keeps
+            # the previous scene so a restart after an interrupted apply, or a
+            # failed rollback, can still match and restore the previous scene.
             applied = store.applied
+            previous = (
+                {"id": applied["id"], "background_changed": applied["background_changed"]}
+                if applied
+                else None
+            )
             try:
-                store.commit(store.scenes, {"id": scene_id, "background_changed": False})
+                store.commit(
+                    store.scenes,
+                    {"id": scene_id, "background_changed": False, "previous": previous},
+                )
             except OSError as exc:
                 raise ValueError(
                     f"Could not save scenes: {exc.strerror or exc}. Current "
@@ -732,7 +751,7 @@ class Engine:
                 and not applied["background_changed"]
                 and store.get(applied["id"])["settings"].get("effect") == "image"
             ):
-                changed = {**applied, "background_changed": True}
+                changed = {"id": applied["id"], "background_changed": True}
                 try:
                     store.commit(store.scenes, changed)
                 except OSError:

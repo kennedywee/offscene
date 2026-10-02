@@ -90,12 +90,20 @@ def _parse(data):
         ):
             raise ValueError("invalid scene record")
         ids.add(scene["id"])
+    def valid_marker(marker, nested):
+        return marker is None or (
+            isinstance(marker, dict)
+            and marker.get("id") in ids
+            and isinstance(marker.get("background_changed"), bool)
+            and (
+                marker.get("previous") is None
+                if nested
+                else valid_marker(marker.get("previous"), True)
+            )
+        )
+
     applied = data.get("applied")
-    if applied is not None and (
-        not isinstance(applied, dict)
-        or applied.get("id") not in ids
-        or not isinstance(applied.get("background_changed"), bool)
-    ):
+    if not valid_marker(applied, False):
         raise ValueError("invalid applied scene")
     return scenes, applied
 
