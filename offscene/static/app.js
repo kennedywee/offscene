@@ -9,6 +9,7 @@ let disconnected = false;
 let previewSocket = null;
 let previewFrames = 0;
 let previewPeriod = performance.now();
+let cameraNames = new Map();
 
 async function api(path, options = {}) {
   const response = await fetch(`/api/${path}`, {
@@ -94,6 +95,7 @@ function render(next, sync = false) {
     : "Preview";
   if (next.gpu) $("gpu").textContent = next.gpu;
   syncCameraControls(next);
+  renderScenes(next);
   $("error").textContent = next.error || uiError || "";
   $("error").hidden = !next.error && !uiError;
   $("warning").textContent = next.warning || "";
@@ -219,6 +221,7 @@ panelTabs.forEach((tab, index) => {
 async function refreshDevices() {
   const list = await (await api("devices")).json();
   const physical = list.filter((device) => !device.virtual);
+  cameraNames = new Map(physical.map((device) => [device.path, device.name]));
   dropdowns.get("camera").setOptions(
     physical.length
       ? physical.map((device) => ({

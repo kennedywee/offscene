@@ -71,7 +71,7 @@ input:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-:where(button, input, a):focus-visible {
+:where(button, input, a, [role="menuitem"]):focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 4px;
 }
@@ -720,7 +720,7 @@ footer {
 @media (min-width: 1101px) and (min-height: 750px) {
   .viewport {
     aspect-ratio: auto;
-    height: calc(100vh - 350px);
+    height: calc(100vh - 402px);
     min-height: 420px;
   }
   .controls {
@@ -1073,4 +1073,149 @@ footer {
   font-size: 13px;
   font-weight: 600;
   margin: 0;
+}
+
+/* Saved scenes share the source controls' compact row rhythm. */
+.scene-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 12px;
+}
+.scene-field {
+  flex: 0 1 260px;
+  min-width: 0;
+}
+.scene-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scene-actions > button:not(.icon-button) {
+  white-space: nowrap;
+  font-size: 13px;
+}
+#scene-more {
+  width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--control-border);
+  background: var(--raised);
+  color: var(--text);
+}
+#scene-more svg {
+  stroke-width: 3;
+}
+#scene-more::before {
+  display: none;
+}
+.scene-meta {
+  display: flex;
+  flex: 1 1 280px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+#scene-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+}
+#scene-state strong {
+  font-weight: 600;
+}
+.scene-chip {
+  padding: 1px 7px;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+#scene-status:empty {
+  display: none;
+}
+#scene-status {
+  color: var(--text);
+}
+.scene-error {
+  flex-basis: 100%;
+  color: var(--error);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.scene-menu [role="menuitem"] {
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 13px;
+  text-align: left;
+}
+.scene-menu [role="menuitem"]:hover,
+.scene-menu [role="menuitem"]:focus-visible {
+  background: #414141;
+}
+.scene-menu [role="menuitem"]:focus-visible {
+  outline-offset: -2px;
+}
+.scene-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+.scene-dialog::backdrop {
+  background: #000000a0;
+}
+.scene-dialog h2 {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.scene-dialog p {
+  margin-top: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.scene-dialog input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.scene-dialog .field-error {
+  margin-top: 8px;
+  color: var(--error);
+  font-size: 12px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+@media (max-width: 600px) {
+  .scene-field {
+    flex-basis: 100%;
+  }
+  .scene-actions {
+    flex: 1 1 100%;
+  }
+  .scene-actions > button:not(.icon-button) {
+    flex: 1;
+    min-height: 44px;
+  }
+  #scene-more {
+    width: 44px;
+    min-height: 44px;
+  }
+  .dialog-actions button {
+    flex: 1;
+    min-height: 44px;
+  }
 }
