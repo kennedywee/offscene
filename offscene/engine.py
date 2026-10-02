@@ -675,21 +675,27 @@ class Engine:
                         f"The background image for scene “{scene['name']}” is "
                         "missing or unreadable. Current settings are unchanged."
                     ) from exc
-            previous = self.settings
-            stage = "settings"
+            # Commit the scene marker first and settings last. If settings fail
+            # and the marker rollback also fails, the disk keeps the previous
+            # settings; the stale marker only shows that scene as Modified.
+            applied = store.applied
             try:
-                self._save_settings(new)
-                stage = "scenes"
-                try:
-                    store.commit(
-                        store.scenes, {"id": scene_id, "background_changed": False}
-                    )
-                except OSError:
-                    self._save_settings(previous)
-                    raise
+                store.commit(store.scenes, {"id": scene_id, "background_changed": False})
             except OSError as exc:
                 raise ValueError(
-                    f"Could not save {stage}: {exc.strerror or exc}. Current "
+                    f"Could not save scenes: {exc.strerror or exc}. Current "
+                    "settings are unchanged."
+                ) from exc
+            try:
+                self._save_settings(new)
+            except OSError as exc:
+                try:
+                    store.commit(store.scenes, applied)
+                except OSError:
+                    log.exception("Could not restore the applied scene marker")
+                    store.applied = applied
+                raise ValueError(
+                    f"Could not save settings: {exc.strerror or exc}. Current "
                     "settings are unchanged."
                 ) from exc
             self.settings = new
@@ -703,10 +709,23 @@ class Engine:
         return self.status()
 
     def set_background(self, image):
-        """Use an uploaded image. It differs from any applied scene's image."""
+        """Use an uploaded image and select Image, or change nothing on failure."""
         with self.scene_lock, self.lock:
+            previous = self.background, self.background_version
             self.background = image
             self.background_version += 1
+            try:
+                result = self.update({"effect": "image"})
+            except OSError as exc:
+                self.background, self.background_version = previous
+                raise ValueError(
+                    f"Could not save settings: {exc.strerror or exc}. The previous "
+                    "background is unchanged."
+                ) from exc
+            except Exception:
+                self.background, self.background_version = previous
+                raise
+            # The new image differs from any applied image scene's image.
             store, applied = self.scenes, self.scenes.applied
             if (
                 applied
@@ -719,6 +738,8 @@ class Engine:
                 except OSError:
                     log.exception("Could not record the background change")
                     store.applied = changed
+                result = self.status()
+            return result
 
     def update(self, patch):
         if "camera_controls" in patch or "camera_preset" in patch:

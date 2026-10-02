@@ -191,8 +191,10 @@ async def background(file: Annotated[UploadFile, File()]):
         decoded = await asyncio.to_thread(decode_image, data)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    await asyncio.to_thread(engine.set_background, decoded)
-    return engine.update({"effect": "image"})
+    try:
+        return await asyncio.to_thread(engine.set_background, decoded)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 class SceneName(BaseModel):
